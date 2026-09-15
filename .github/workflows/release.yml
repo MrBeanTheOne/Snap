@@ -17,8 +17,12 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install ffmpeg + deno
-        run: choco install ffmpeg deno -y --no-progress
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install ffmpeg
+        run: choco install ffmpeg -y --no-progress
 
       - name: Install dependencies
         run: pip install pywebview yt-dlp yt-dlp-ejs mutagen pystray pillow pyinstaller
