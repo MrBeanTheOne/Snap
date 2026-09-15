@@ -9,14 +9,16 @@ datas = [('ui.html', '.'), ('ui.css', '.'), ('ui.js', '.'), ('icon.png', '.')]
 datas += collect_data_files('yt_dlp_ejs')
 
 
-def _find_tool(name, winget_glob, hint):
-    # PATH first, then WinGet's package dir (its PATH edit only reaches future shells)
+def _find_tool(name, winget_glob, hint, min_mb=5):
+    # PATH first, then WinGet's package dir (its PATH edit only reaches future shells).
+    # Size floor rejects launcher shims (chocolatey's are ~9KB and break off-machine).
+    real = lambda p: p and _os.path.getsize(p) >= min_mb * 1048576
     p = _shutil.which(name)
-    if p:
+    if real(p):
         return p
-    hits = _glob.glob(_os.path.expandvars(winget_glob), recursive=True)
+    hits = [h for h in _glob.glob(_os.path.expandvars(winget_glob), recursive=True) if real(h)]
     if not hits:
-        raise SystemExit(f'{name} not found — install it ({hint}) before building')
+        raise SystemExit(f'real {name} not found (shims rejected) — install it ({hint}) before building')
     return hits[0]
 
 

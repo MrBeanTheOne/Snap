@@ -24,6 +24,9 @@ jobs:
       - name: Install ffmpeg
         run: choco install ffmpeg -y --no-progress
 
+      - name: Put the real ffmpeg on PATH (not choco's 9KB shim)
+        run: Add-Content $env:GITHUB_PATH "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin"
+
       - name: Install dependencies
         run: pip install pywebview yt-dlp yt-dlp-ejs mutagen pystray pillow pyinstaller
 
