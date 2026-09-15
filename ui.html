@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Snap</title>
+<link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <nav>
+    <div class="brand"><img src="icon.png" alt="">SNAP</div>
+    <button id="nav-grab" class="on" onclick="showTab('grab')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.2" y2="16.2"/></svg>
+      Search</button>
+    <button id="nav-dls" onclick="showTab('dls')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Downloads<span class="badge" id="dlBadge" style="display:none"></span></button>
+    <button id="nav-ch" onclick="showTab('ch')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.5" fill="currentColor" stroke="none"/></svg>
+      Channels<span class="badge" id="chBadge" style="display:none"></span></button>
+    <button id="nav-lib" onclick="showTab('lib')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Library</button>
+    <button id="nav-set" onclick="showTab('set')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings</button>
+  </nav>
+
+  <!-- ============ SEARCH TAB ============ -->
+  <section class="tab on" id="tab-grab">
+    <div class="wrap">
+      <div class="omni">
+        <input id="url" type="text" placeholder="Paste a link or search YouTube…" onkeydown="if(event.key==='Enter')fetchInfo()">
+        <button id="fetchBtn" onclick="fetchInfo()">Fetch</button>
+      </div>
+      <div id="status"></div>
+      <div id="fetchProg" style="display:none">
+        <div class="loadbar"><div></div></div>
+        <span class="hint" id="fetchTxt">Loading…</span>
+      </div>
+
+      <div class="blankstate" id="grabEmpty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.2" y2="16.2"/></svg>
+        <div class="t1">Search and download your favorite videos</div>
+        <div class="t2">Paste a link or type a search above — or drop a local file to convert it<br>MP4 · MKV · MP3 · M4A · FLAC · WAV · OPUS</div>
+      </div>
+
+      <div id="preview">
+        <div class="head">
+          <img id="thumb" alt="">
+          <div class="pcol">
+            <div id="ptitle"></div>
+            <div id="dlnote"></div>
+          </div>
+        </div>
+
+        <div class="pills" id="chTabs" style="display:none">
+          <button data-t="videos">Videos</button>
+          <button data-t="shorts">Shorts</button>
+          <button data-t="streams">Live</button>
+        </div>
+
+        <div id="plbar">
+          <label class="chk"><input type="checkbox" id="selAll" checked onchange="toggleAll()">All</label>
+          <span class="lbl">Set every video to</span>
+          <select class="sm" id="allMode">
+            <option value="mp4">MP4</option><option value="mkv">MKV</option><option value="mp3">MP3</option>
+            <option value="m4a">M4A</option><option value="flac">FLAC</option><option value="wav">WAV</option>
+            <option value="opus">OPUS</option>
+          </select>
+          <select class="sm" id="allQual">
+            <option>2160</option><option>1440</option><option>1080</option>
+            <option>720</option><option>480</option><option>360</option>
+          </select>
+          <button class="mini ghost" onclick="applyAll()">Apply</button>
+          <label class="chk"><input type="checkbox" id="skipDl" checked onchange="applySkip()">skip downloaded</label>
+          <span style="flex:1"></span>
+          <input class="flt" id="plFilter" type="text" placeholder="Filter videos…" oninput="filterList()">
+        </div>
+        <div id="plist"></div>
+        <div id="moreWrap" style="display:none; text-align:center; margin-top:8px">
+          <button id="moreBtn" class="mini ghost" onclick="loadMore()">Load 100 more</button>
+        </div>
+
+        <div id="controls">
+          <div class="seg" id="modeSeg">
+            <input type="radio" name="mode" id="m-mp4" value="mp4" checked><label for="m-mp4">MP4</label>
+            <input type="radio" name="mode" id="m-mkv" value="mkv"><label for="m-mkv">MKV</label>
+            <input type="radio" name="mode" id="m-mp3" value="mp3"><label for="m-mp3">MP3</label>
+            <input type="radio" name="mode" id="m-m4a" value="m4a"><label for="m-m4a">M4A</label>
+            <input type="radio" name="mode" id="m-flac" value="flac"><label for="m-flac">FLAC</label>
+            <input type="radio" name="mode" id="m-wav" value="wav"><label for="m-wav">WAV</label>
+            <input type="radio" name="mode" id="m-opus" value="opus"><label for="m-opus">OPUS</label>
+          </div>
+          <select id="qual"></select>
+          <span id="clipWrap">
+            <span class="lbl">Clip</span>
+            <input class="flt clipt" id="clipA" type="text" placeholder="0:00">
+            <span class="lbl">–</span>
+            <input class="flt clipt" id="clipB" type="text" placeholder="end">
+          </span>
+          <label class="chk"><input type="checkbox" id="subs">Subtitles</label>
+          <button id="dlBtn" class="go" onclick="download()">Download</button>
+          <button id="watchBtn" class="ghost" style="display:none" onclick="watchChannel()">Watch channel</button>
+          <label class="chk" id="autoWrap" style="display:none"><input type="checkbox" id="auto" checked>auto-download new</label>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DOWNLOADS TAB ============ -->
+  <section class="tab" id="tab-dls">
+    <div class="wrap">
+      <div class="pills" id="pills">
+        <button data-f="all" class="on">All</button>
+        <button data-f="downloading">Downloading</button>
+        <button data-f="queued">Queued</button>
+        <button data-f="completed">Completed</button>
+        <span style="flex:1"></span>
+        <button id="pauseBtn" class="ghost" onclick="togglePause()" style="display:none">⏸ Pause queue</button>
+      </div>
+      <div id="folderbar">
+        <a class="act" onclick="pywebview.api.open_folder()">open download folder</a>
+        <span style="flex:1"></span>
+        <input class="flt" id="jobFilter" type="text" placeholder="Search downloads…">
+        <a class="act" onclick="pywebview.api.clear_history()">clear finished</a>
+      </div>
+      <div style="height:12px"></div>
+      <div id="jobs"></div>
+    </div>
+  </section>
+
+  <!-- ============ CHANNELS TAB ============ -->
+  <section class="tab" id="tab-ch">
+    <div class="wrap">
+      <div id="watches"></div>
+      <div class="blankstate" id="chEmpty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.2" fill="currentColor" stroke="none"/></svg>
+        <div class="t1">No watched channels yet</div>
+        <div class="t2">Paste a channel link in the Search tab and hit “Watch channel”</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ LIBRARY TAB ============ -->
+  <section class="tab" id="tab-lib">
+    <div class="wrap">
+      <div id="libbar">
+        <span class="hint" id="libCount"></span>
+        <span style="flex:1"></span>
+        <input class="flt" id="libSearch" type="text" placeholder="Search library…" oninput="renderLibrary()">
+        <a class="act" onclick="loadLibrary()">refresh</a>
+        <a class="act" onclick="pywebview.api.open_folder()">open folder</a>
+      </div>
+      <div id="libGrid"></div>
+    </div>
+    <div id="audBar" style="display:none">
+      <span id="audTitle"></span>
+      <audio id="audEl" controls></audio>
+      <button class="mini ghost" onclick="audEl.pause(); audBar.style.display='none'">✕</button>
+    </div>
+  </section>
+
+  <div id="vidModal" style="display:none" onclick="vidEl.pause(); vidModal.style.display='none'">
+    <video id="vidEl" controls onclick="event.stopPropagation()"></video>
+  </div>
+
+  <!-- ============ SETTINGS TAB ============ -->
+  <section class="tab" id="tab-set">
+    <div class="wrap set">
+      <h3>Downloads</h3>
+      <div class="row">
+        <span class="rlbl">Save downloads to</span>
+        <span class="mono" id="outdir"></span>
+        <button class="mini ghost" onclick="pywebview.api.choose_folder().then(d => outdir.textContent = d)">Change</button>
+        <a class="act" onclick="pywebview.api.open_folder()">open</a>
+      </div>
+      <div class="row">
+        <span class="rlbl">Parallel downloads</span>
+        <select id="sWorkers" onchange="saveSettings()">
+          <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+        </select>
+        <span class="hint">many at once can trip YouTube rate limits · reducing applies after restart</span>
+      </div>
+      <div class="row">
+        <span class="rlbl">Subtitle language</span>
+        <select id="sSubLang" onchange="saveSettings()">
+          <option value="en">English</option>
+          <option value="fr">French</option>
+          <option value="en,fr">English + French</option>
+          <option value="all">All languages</option>
+        </select>
+        <span class="hint">used when a download has Subtitles ticked</span>
+      </div>
+      <div class="row">
+        <span class="rlbl">Default format</span>
+        <select id="sMode" onchange="saveSettings()">
+          <option value="mp4">MP4</option><option value="mkv">MKV</option><option value="mp3">MP3</option>
+          <option value="m4a">M4A</option><option value="flac">FLAC</option><option value="wav">WAV</option>
+          <option value="opus">OPUS</option>
+        </select>
+        <select id="sQual" onchange="saveSettings()">
+          <option>2160</option><option>1440</option><option>1080</option>
+          <option>720</option><option>480</option><option>360</option>
+        </select>
+        <label class="chk"><input type="checkbox" id="sSubs" onchange="saveSettings()">subtitles</label>
+      </div>
+      <div class="row">
+        <span class="rlbl">Playlist folders</span>
+        <label class="chk"><input type="checkbox" id="sOrg" onchange="saveSettings()">sort playlist &amp; channel downloads into a subfolder named after the source</label>
+      </div>
+      <div class="row">
+        <span class="rlbl">Load channel videos</span>
+        <select id="sPage" onchange="saveSettings()">
+          <option value="100">100 at a time</option>
+          <option value="250">250 at a time</option>
+          <option value="500">500 at a time</option>
+          <option value="0">everything at once</option>
+        </select>
+        <span class="hint">“everything” can take a while on big channels — a progress bar shows</span>
+      </div>
+      <div class="row">
+        <span class="rlbl">Downloaded before</span>
+        <span class="hint">fetched videos you already grabbed get a ✓ badge</span>
+        <a class="act" onclick="pywebview.api.clear_downloaded()">forget all</a>
+      </div>
+      <div class="row">
+        <span class="rlbl">Music tags</span>
+        <label class="chk"><input type="checkbox" id="sMb" onchange="saveSettings()">look up proper artist / album / year on MusicBrainz after each audio download</label>
+      </div>
+      <div class="row">
+        <span class="rlbl">MP3 bitrate</span>
+        <select id="sBitrate" onchange="saveSettings()"><option>128</option><option>192</option><option>256</option><option>320</option></select>
+        <span class="hint">kbps · M4A/OPUS keep YouTube’s original stream, FLAC/WAV are lossless</span>
+      </div>
+
+      <div class="row">
+        <span class="rlbl">Send from browser</span>
+        <input class="flt" style="width:340px" readonly onclick="this.select()"
+          value="javascript:location.href='snap://'+encodeURIComponent(location.href)">
+        <span class="hint">save this as a bookmark — clicking it on any video page opens it in Snap</span>
+      </div>
+
+      <h3>Behaviour</h3>
+      <div class="row">
+        <span class="rlbl">YouTube login</span>
+        <label class="chk"><input type="checkbox" id="sCookies" onchange="saveSettings()">use Edge’s YouTube login (age-restricted &amp; members videos — sign into YouTube in Edge first)</label>
+      </div>
+      <div class="row">
+        <span class="rlbl">Clipboard links</span>
+        <label class="chk"><input type="checkbox" id="sClip" onchange="saveSettings()">fetch copied links automatically</label>
+      </div>
+      <div class="row">
+        <span class="rlbl">Notifications</span>
+        <label class="chk"><input type="checkbox" id="sNotify" onchange="saveSettings()">toast when downloads finish or watches find new videos</label>
+      </div>
+      <div class="row">
+        <span class="rlbl">Close button</span>
+        <label class="chk"><input type="checkbox" id="sTray" onchange="saveSettings()">hide to tray instead of quitting (watches keep running)</label>
+      </div>
+      <div class="row">
+        <span class="rlbl">Minimize button</span>
+        <label class="chk"><input type="checkbox" id="sMinTray" onchange="saveSettings()">also hide to tray instead of the taskbar</label>
+      </div>
+      <div class="row">
+        <span class="rlbl">Start with Windows</span>
+        <label class="chk"><input type="checkbox" id="sAuto" onchange="saveSettings()">launch minimized to the tray at login, so channel watches always run</label>
+      </div>
+      <div class="row">
+        <span class="rlbl">Check channels every</span>
+        <select id="sInterval" onchange="saveSettings()">
+          <option value="300">5 minutes</option><option value="900">15 minutes</option>
+          <option value="1800">30 minutes</option><option value="3600">60 minutes</option>
+        </select>
+      </div>
+
+      <h3>Updates</h3>
+      <div class="row">
+        <span class="rlbl">Version</span>
+        <span class="mono">Snap <span id="appv">…</span> · yt-dlp <span id="ydlv">…</span></span>
+      </div>
+      <div class="row">
+        <button class="mini go" onclick="checkUpdate()">Check for updates</button>
+        <span id="updMsg" class="hint"></span>
+      </div>
+    </div>
+  </section>
+
+<script src="ui.js"></script>
+</body>
+</html>

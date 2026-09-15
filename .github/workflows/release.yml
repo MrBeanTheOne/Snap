@@ -1,0 +1,46 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ffmpeg + deno
+        run: choco install ffmpeg deno -y --no-progress
+
+      - name: Install dependencies
+        run: pip install pywebview yt-dlp yt-dlp-ejs mutagen pystray pillow pyinstaller
+
+      - name: Build
+        run: python -m PyInstaller Snap.spec --noconfirm
+
+      - name: Zip
+        run: Compress-Archive -Path dist/Snap -DestinationPath Snap-win64.zip
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Installer
+        run: |
+          $v = '${{ github.ref_name }}'.TrimStart('v')
+          iscc /Qp "/DMyAppVersion=$v" installer.iss
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Snap-win64.zip
+            dist/Snap-setup.exe
+          generate_release_notes: true

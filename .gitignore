@@ -1,0 +1,6 @@
+.termdeck/
+input/
+__pycache__/
+build/
+dist/
+*.pyc
