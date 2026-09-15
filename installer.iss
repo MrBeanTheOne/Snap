@@ -2,7 +2,7 @@
 ; Build: iscc installer.iss   (CI passes /DMyAppVersion=x.y.z)
 
 #ifndef MyAppVersion
-  #define MyAppVersion "4.10.5"
+  #define MyAppVersion "4.10.6"
 #endif
 
 [Setup]
