@@ -9,7 +9,7 @@ import urllib.request
 import webbrowser
 import zipfile
 
-APP_VERSION = "4.10.4"
+APP_VERSION = "4.10.5"
 REPO = "MrBeanTheOne/Snap"
 STATE_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Snap")
 PKG_DIR = os.path.join(STATE_DIR, "pkgs")  # in-app yt-dlp updates land here, shadowing the bundled copy
@@ -107,8 +107,9 @@ def update_app():
 
 
 def _stage_release(url, inst):
-    """Download and unpack the release zip into <install>/_update; returns the new app root."""
-    stage = os.path.join(inst, "_update")
+    """Download and unpack the release zip into a temp stage; returns the new app root.
+    Staged OUTSIDE the install dir so the mirror-copy can't eat its own source."""
+    stage = os.path.join(os.environ.get("TEMP", inst), "snap_update_stage")
     shutil.rmtree(stage, ignore_errors=True)
     os.makedirs(stage)
     zf = os.path.join(stage, "snap.zip")
@@ -129,7 +130,7 @@ def _spawn_apply(src, inst, exe="Snap.exe"):
     with open(bat, "w", encoding="ascii", errors="replace") as f:
         f.write(f"""@echo off
 timeout /t 2 /nobreak >nul
-robocopy "{src}" "{inst}" /e /move /r:20 /w:1 >nul
+robocopy "{src}" "{inst}" /mir /r:20 /w:1 >nul
 rmdir /s /q "{os.path.dirname(src)}"
 {launch}
 del "%~f0"

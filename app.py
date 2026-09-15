@@ -14,7 +14,19 @@ import updater
 updater.apply_pending()  # must run before yt_dlp is imported so a downloaded update wins
 
 import webview
-import yt_dlp
+
+try:
+    import yt_dlp
+except Exception:
+    # a broken pkgs/ update must never kill the app — roll back to the bundled yt-dlp
+    if updater.PKG_DIR in sys.path:
+        sys.path.remove(updater.PKG_DIR)
+        for m in [m for m in sys.modules if m == "yt_dlp" or m.startswith("yt_dlp.")]:
+            del sys.modules[m]
+        shutil.rmtree(updater.PKG_DIR, ignore_errors=True)
+        import yt_dlp
+    else:
+        raise
 from yt_dlp.postprocessor.metadataparser import MetadataParserPP
 
 import library
