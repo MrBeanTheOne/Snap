@@ -10,7 +10,7 @@ import webbrowser
 import zipfile
 
 APP_VERSION = "4.10.2"
-REPO = "MrBeanTheOne/snap"
+REPO = "MrBeanTheOne/Snap"
 STATE_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Snap")
 PKG_DIR = os.path.join(STATE_DIR, "pkgs")  # in-app yt-dlp updates land here, shadowing the bundled copy
 
