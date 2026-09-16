@@ -5,7 +5,8 @@ import shutil as _shutil
 
 from PyInstaller.utils.hooks import collect_data_files
 
-datas = [('ui.html', '.'), ('ui.css', '.'), ('ui.js', '.'), ('icon.png', '.')]
+datas = [('ui.html', '.'), ('ui.css', '.'), ('ui.js', '.'), ('icon.png', '.'),
+         ('LICENSE', '.'), ('THIRD-PARTY-NOTICES.md', '.')]
 datas += collect_data_files('yt_dlp_ejs')
 
 

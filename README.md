@@ -85,6 +85,13 @@ The build lands in `dist/Snap/` with ffmpeg bundled — zip it and take it anywh
 - History, watches, and settings persist in `%APPDATA%/Snap/state.json`
 - Age-restricted / members-only videos: turn on **Settings → YouTube login** (uses your Edge sign-in)
 
+## License
+
+Copyright © 2026 MrBeanTheOne — **all rights reserved** ([LICENSE](LICENSE)).
+Source is visible and released builds are free for personal use; no other rights granted.
+Bundled third-party components keep their own licenses — see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
 ## Credits
 
 Built on the shoulders of [yt-dlp](https://github.com/yt-dlp/yt-dlp),

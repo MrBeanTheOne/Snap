@@ -2,7 +2,7 @@
 ; Build: iscc installer.iss   (CI passes /DMyAppVersion=x.y.z)
 
 #ifndef MyAppVersion
-  #define MyAppVersion "4.10.6"
+  #define MyAppVersion "4.10.7"
 #endif
 
 [Setup]
@@ -23,6 +23,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
+LicenseFile=LICENSE
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked
