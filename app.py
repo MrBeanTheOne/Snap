@@ -149,6 +149,8 @@ class Api:
         for w in self.watches:
             w.setdefault("tabs", ["videos"])
             w["url"] = re.sub(r"/(videos|shorts|streams|live)/?$", "", w["url"].rstrip("/"))
+        self.update_info = None  # filled by the launch check below; the UI polls for it
+        threading.Thread(target=self._check_update_bg, daemon=True).start()
         self._nworkers = max(1, min(8, int(self.settings["workers"])))
         for _ in range(self._nworkers):
             threading.Thread(target=self._worker, daemon=True).start()
@@ -359,8 +361,21 @@ class Api:
     def get_app_version(self):
         return updater.APP_VERSION
 
+    def _check_update_bg(self):
+        try:
+            self.update_info = updater.check_update()
+        except Exception as e:
+            self.update_info = {"error": str(e)[:120]}
+
+    def get_update_info(self):
+        return self.update_info  # None until the launch check lands
+
+    def get_update_progress(self):
+        return updater.PROGRESS
+
     def check_update(self):
-        return updater.check_update()
+        self.update_info = updater.check_update()
+        return self.update_info
 
     def update_ytdlp(self):
         return updater.update_ytdlp()

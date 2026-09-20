@@ -9,10 +9,12 @@ import urllib.request
 import webbrowser
 import zipfile
 
-APP_VERSION = "4.10.7"
+APP_VERSION = "4.10.8"
 REPO = "MrBeanTheOne/Snap"
 STATE_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Snap")
 PKG_DIR = os.path.join(STATE_DIR, "pkgs")  # in-app yt-dlp updates land here, shadowing the bundled copy
+# ponytail: one update at a time, so a module global is enough — the UI polls it
+PROGRESS = {"pct": 0, "stage": ""}
 
 
 def apply_pending():
@@ -88,6 +90,7 @@ def update_app():
         except Exception as e:
             return {"error": str(e)[:120]}
     # frozen: download the latest release zip, stage it, swap after the app exits
+    PROGRESS.update(pct=0, stage="checking")
     try:
         req = urllib.request.Request(
             f"https://api.github.com/repos/{REPO}/releases/latest",
@@ -95,15 +98,25 @@ def update_app():
         )
         with urllib.request.urlopen(req, timeout=10) as r:
             assets = json.load(r).get("assets") or []
-        url = next(a["browser_download_url"] for a in assets if a["name"].endswith(".zip"))
+        url = next((a["browser_download_url"] for a in assets if a["name"].endswith(".zip")), "")
+    except Exception as e:
+        PROGRESS.update(pct=0, stage="")
+        return {"error": str(e)[:160]}
+    if not url:
+        # nothing installable on that release — the page is the only way through
+        webbrowser.open(f"https://github.com/{REPO}/releases/latest")
+        PROGRESS.update(pct=0, stage="")
+        return {"manual": True}
+    try:
         inst = os.path.dirname(sys.executable)
         stage = _stage_release(url, inst)
         _spawn_apply(stage, inst)
+        PROGRESS.update(pct=100, stage="restarting")
         return {"restart": True}
-    except Exception:
-        # private repo / no assets / read-only install dir — the release page still works
-        webbrowser.open(f"https://github.com/{REPO}/releases/latest")
-        return {"manual": True}
+    except Exception as e:
+        # report it instead of bouncing to the browser — the reason is what you need
+        PROGRESS.update(pct=0, stage="")
+        return {"error": str(e)[:160]}
 
 
 def _stage_release(url, inst):
@@ -113,8 +126,21 @@ def _stage_release(url, inst):
     shutil.rmtree(stage, ignore_errors=True)
     os.makedirs(stage)
     zf = os.path.join(stage, "snap.zip")
+    PROGRESS.update(pct=0, stage="downloading")
+    got = 0
     with urllib.request.urlopen(url, timeout=600) as r, open(zf, "wb") as f:
-        shutil.copyfileobj(r, f)
+        total = int(r.headers.get("Content-Length") or 0)
+        while True:
+            chunk = r.read(262144)
+            if not chunk:
+                break
+            f.write(chunk)
+            got += len(chunk)
+            if total:
+                PROGRESS["pct"] = got * 100 // total
+    if got < 1 << 20:
+        raise RuntimeError("download truncated")  # an error page unpacked as a build would brick it
+    PROGRESS.update(pct=100, stage="unpacking")
     zipfile.ZipFile(zf).extractall(stage)
     os.remove(zf)
     src = os.path.join(stage, "Snap")  # CI zips dist/Snap → archive root is Snap/

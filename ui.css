@@ -107,6 +107,7 @@ button:focus-visible, input:focus-visible, a:focus-visible, select:focus-visible
 .loadbar { height: 4px; border-radius: 2px; background: var(--panel2); overflow: hidden; margin: 6px 0 5px; }
 .loadbar div { height: 100%; width: 30%; background: var(--blue); animation: slide 1.1s ease-in-out infinite alternate; }
 @keyframes slide { from { margin-left: 0; } to { margin-left: 70%; } }
+.loadbar.det div { animation: none; transition: width .25s linear; }
 @media (prefers-reduced-motion: reduce) { .loadbar div { animation: none; width: 100%; } }
 #controls { margin-top: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 

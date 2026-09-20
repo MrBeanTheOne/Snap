@@ -495,34 +495,68 @@ function showConvert(path, name) {
   dlBtn.textContent = 'Convert';
 }
 
-function updButton(label, run) {
+const STAGE_TXT = { checking: 'Checking…', downloading: 'Downloading', unpacking: 'Unpacking…', restarting: 'Restarting…' };
+
+function updButton(label, run, withProgress) {
   const b = document.createElement('button');
   b.className = 'mini go';
   b.textContent = label;
   b.onclick = async () => {
     b.disabled = true; b.textContent = 'Updating…';
+    const fill = updBar.firstElementChild;
+    let timer = 0;
+    if (withProgress) {
+      fill.style.width = '0%';
+      updBar.style.display = '';
+      // the js_api call below blocks its own thread; pywebview serves this poll on another
+      timer = setInterval(async () => {
+        const p = await api().get_update_progress();
+        fill.style.width = p.pct + '%';
+        b.textContent = p.stage === 'downloading'
+          ? `Downloading… ${p.pct}%` : (STAGE_TXT[p.stage] || 'Updating…');
+      }, 400);
+    }
     const res = await run();
+    clearInterval(timer);
     b.remove();
     if (res.restart) {
-      updMsg.textContent = 'Update downloaded — Snap will restart itself now…';
+      fill.style.width = '100%';
+      updMsg.textContent = 'Update installed — Snap will restart itself now…';
       api().restart_app();
       return;
     }
-    updMsg.textContent = res.manual ? 'Opened the download page in your browser'
+    updBar.style.display = 'none';
+    updMsg.textContent = res.manual ? 'That release has no installable build — opened the download page'
       : res.ok ? 'Updated — restart Snap to apply'
-      : 'update failed: ' + res.error;
+      : 'Update failed: ' + friendly(res.error);
+    updMsg.title = res.error || '';  // the full reason is too long for one line
   };
   updMsg.appendChild(b);
 }
 
-async function checkUpdate() {
-  updMsg.textContent = 'checking…';
-  const r = await api().check_update();
-  if (r.error) { updMsg.textContent = 'couldn’t check: ' + r.error; return; }
-  updMsg.innerHTML = '';
+function renderUpdate(r) {
+  updMsg.innerHTML = ''; updMsg.title = '';
+  setBadge.style.display = r.app_available ? '' : 'none';
+  if (r.error) {
+    updMsg.textContent = 'Couldn’t check for updates';
+    updMsg.title = r.error;
+    return;
+  }
   if (r.available) updButton(`Update yt-dlp to ${r.latest}`, () => api().update_ytdlp());
-  if (r.app_available) updButton(`Update Snap to ${r.app_latest}`, () => api().update_app());
-  if (!r.available && !r.app_available) updMsg.textContent = `up to date (yt-dlp ${r.latest})`;
+  if (r.app_available) updButton(`Update Snap to ${r.app_latest}`, () => api().update_app(), true);
+  if (!r.available && !r.app_available) updMsg.textContent = `Up to date (yt-dlp ${r.latest})`;
+}
+
+async function checkUpdate() {
+  updMsg.innerHTML = 'checking…';
+  renderUpdate(await api().check_update());
+}
+
+// the launch check runs on a background thread — show its result as soon as it lands
+async function pickUpLaunchCheck(tries = 60) {
+  const r = await api().get_update_info();
+  if (r) renderUpdate(r);
+  else if (tries) setTimeout(() => pickUpLaunchCheck(tries - 1), 500);
 }
 
 window.addEventListener('pywebviewready', async () => {
@@ -533,6 +567,7 @@ window.addEventListener('pywebviewready', async () => {
   const pending = await api().get_pending_url();  // snap:// link that launched the app
   if (pending) { url.value = pending; fetchInfo(); }
   else pasteClipboard();
+  pickUpLaunchCheck();
   setInterval(poll, 500);
 });
 window.addEventListener('focus', () => window.pywebview && pasteClipboard());
