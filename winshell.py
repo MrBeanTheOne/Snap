@@ -94,7 +94,7 @@ def make_tray(window, api, icon_path):
         window.restore()
 
     def quit_(icon, item):
-        api.settings["tray"] = False  # let the close actually close
+        api.quitting = True  # let the close actually close, without persisting tray=False
         icon.stop()
         window.destroy()
 

@@ -149,6 +149,7 @@ class Api:
         for w in self.watches:
             w.setdefault("tabs", ["videos"])
             w["url"] = re.sub(r"/(videos|shorts|streams|live)/?$", "", w["url"].rstrip("/"))
+        self.quitting = False  # set by any path that means "really close", not "hide to tray"
         self.update_info = None  # filled by the launch check below; the UI polls for it
         threading.Thread(target=self._check_update_bg, daemon=True).start()
         self._nworkers = max(1, min(8, int(self.settings["workers"])))
@@ -384,7 +385,10 @@ class Api:
         return updater.update_app()
 
     def restart_app(self):
-        # the updater's batch script waits for this process to die, swaps files, relaunches
+        # The updater's batch waits for this process to DIE before swapping files. A plain
+        # destroy() gets cancelled by the tray close-handler, so the window would only hide,
+        # Snap.exe would stay locked, and robocopy would spin on ERROR 32 forever.
+        self.quitting = True
         threading.Timer(0.6, webview.windows[0].destroy).start()
 
     # ---- channel watch ----
@@ -761,7 +765,7 @@ if __name__ == "__main__":
     )
 
     def on_closing():
-        if api.settings.get("tray", True):
+        if api.settings.get("tray", True) and not api.quitting:
             window.hide()
             return False  # cancel the close — keep watches/downloads running in the tray
 

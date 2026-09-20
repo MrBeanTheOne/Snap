@@ -9,7 +9,7 @@ import urllib.request
 import webbrowser
 import zipfile
 
-APP_VERSION = "4.10.9"
+APP_VERSION = "4.10.10"
 REPO = "MrBeanTheOne/Snap"
 STATE_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Snap")
 PKG_DIR = os.path.join(STATE_DIR, "pkgs")  # in-app yt-dlp updates land here, shadowing the bundled copy
@@ -175,15 +175,28 @@ def _stage_release(url, inst):
 
 
 def _spawn_apply(src, inst, exe="Snap.exe"):
-    """Detached batch: wait for this process to exit, move the staged build in, relaunch."""
+    """Background batch: wait for the old exe to unlock, mirror the staged build in, relaunch."""
     bat = os.path.join(os.environ.get("TEMP", inst), "snap_update.bat")
+    target = os.path.join(inst, exe or "Snap.exe")
     launch = f'start "" "{os.path.join(inst, exe)}"' if exe else ""
+    # Poll the exe itself: opening it for append fails while a process holds the image.
+    # A fixed sleep raced our own shutdown and left robocopy retrying ERROR 32 against a
+    # still-running Snap.exe. The cap stops a hung exit leaving an invisible cmd spinning.
     with open(bat, "w", encoding="ascii", errors="replace") as f:
         f.write(f"""@echo off
-timeout /t 2 /nobreak >nul
-robocopy "{src}" "{inst}" /mir /r:20 /w:1 >nul
+set /a n=0
+:wait
+set /a n+=1
+if %n% geq 60 goto go
+2>nul (>>"{target}" call ) && goto go
+timeout /t 1 /nobreak >nul
+goto wait
+:go
+robocopy "{src}" "{inst}" /mir /r:10 /w:1 >nul
 rmdir /s /q "{os.path.dirname(src)}"
 {launch}
 del "%~f0"
 """)
-    subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000008)  # CREATE_NO_WINDOW | DETACHED
+    # CREATE_NO_WINDOW alone: Windows IGNORES it when DETACHED_PROCESS is also set, so the
+    # old 0x08000008 handed cmd its own visible console. The child outlives us either way.
+    subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000)
