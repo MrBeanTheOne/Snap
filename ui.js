@@ -495,7 +495,7 @@ function showConvert(path, name) {
   dlBtn.textContent = 'Convert';
 }
 
-const STAGE_TXT = { checking: 'Checking…', downloading: 'Downloading', unpacking: 'Unpacking…', restarting: 'Restarting…' };
+const STAGE_TXT = { checking: 'Checking…', downloading: 'Downloading', unpacking: 'Unpacking…', ytdlp: 'Refreshing yt-dlp…', restarting: 'Restarting…' };
 
 function updButton(label, run, withProgress) {
   const b = document.createElement('button');
@@ -542,9 +542,14 @@ function renderUpdate(r) {
     updMsg.title = r.error;
     return;
   }
-  if (r.available) updButton(`Update yt-dlp to ${r.latest}`, () => api().update_ytdlp());
-  if (r.app_available) updButton(`Update Snap to ${r.app_latest}`, () => api().update_app(), true);
-  if (!r.available && !r.app_available) updMsg.textContent = `Up to date (yt-dlp ${r.latest})`;
+  if (r.app_available) {
+    // the app update refreshes yt-dlp on its way through, so don't offer both
+    updButton(`Update Snap to ${r.app_latest}`, () => api().update_app(), true);
+  } else if (r.available) {
+    updButton(`Update yt-dlp to ${r.latest}`, () => api().update_ytdlp());
+  } else {
+    updMsg.textContent = `Up to date (yt-dlp ${r.latest})`;
+  }
 }
 
 async function checkUpdate() {

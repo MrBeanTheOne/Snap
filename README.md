@@ -58,7 +58,7 @@ A fast, no-nonsense desktop downloader for Windows — a native GUI over
 
 ### 🔄 Never goes stale
 - **Updates yt-dlp in-app** — no pip, works in the packaged exe; one click when YouTube breaks things
-- **Updates itself in-app** — checks at launch and flags Settings when a release is out; one click downloads the new build with a progress bar and restarts into it, no browser trip
+- **Updates itself in-app** — checks at launch and flags Settings when a release is out; one click downloads the new build with a progress bar, pulls the current yt-dlp on the way through, and restarts into it — no browser trip
 - Checks GitHub for new Snap releases — and every tagged version is built automatically by CI
 
 ## Run from source

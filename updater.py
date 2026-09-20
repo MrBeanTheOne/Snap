@@ -9,21 +9,41 @@ import urllib.request
 import webbrowser
 import zipfile
 
-APP_VERSION = "4.10.8"
+APP_VERSION = "4.10.9"
 REPO = "MrBeanTheOne/Snap"
 STATE_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Snap")
 PKG_DIR = os.path.join(STATE_DIR, "pkgs")  # in-app yt-dlp updates land here, shadowing the bundled copy
+PKG_STAMP = os.path.join(PKG_DIR, ".app_version")  # which build this override was fetched for
 # ponytail: one update at a time, so a module global is enough — the UI polls it
 PROGRESS = {"pct": 0, "stage": ""}
 
 
 def apply_pending():
-    """Finish a pending yt-dlp update. Must run BEFORE yt_dlp is imported."""
+    """Finish a pending yt-dlp update, and retire one this build has outgrown.
+    Must run BEFORE yt_dlp is imported."""
     if os.path.isdir(PKG_DIR + ".new"):
         shutil.rmtree(PKG_DIR, ignore_errors=True)
         os.replace(PKG_DIR + ".new", PKG_DIR)
+        try:
+            with open(PKG_STAMP, "w", encoding="ascii") as f:
+                f.write(APP_VERSION)
+        except OSError:
+            pass  # unstamped just means the next launch re-checks against the bundle
+    elif os.path.isdir(PKG_DIR) and _stamp() != APP_VERSION:
+        # Every release bundles the newest yt-dlp CI could pip install, so an override
+        # fetched for an older build is the stale one — left on sys.path it silently
+        # DOWNGRADES yt-dlp on every app update. Retire it; the bundled copy wins.
+        shutil.rmtree(PKG_DIR, ignore_errors=True)
     if os.path.isdir(PKG_DIR):
         sys.path.insert(0, PKG_DIR)
+
+
+def _stamp():
+    try:
+        with open(PKG_STAMP, encoding="ascii") as f:
+            return f.read().strip()
+    except OSError:
+        return ""  # pre-4.10.9 override: no stamp, so it gets retired once
 
 
 def _v(s):
@@ -110,6 +130,11 @@ def update_app():
     try:
         inst = os.path.dirname(sys.executable)
         stage = _stage_release(url, inst)
+        # The bundle is only as fresh as the CI run that built it; grab the current
+        # yt-dlp too so one click lands on the newest of both. Best-effort: a PyPI
+        # hiccup must not cost you the app update, and the bundled copy still works.
+        PROGRESS.update(pct=100, stage="ytdlp")
+        update_ytdlp()
         _spawn_apply(stage, inst)
         PROGRESS.update(pct=100, stage="restarting")
         return {"restart": True}
