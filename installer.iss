@@ -1,4 +1,4 @@
-; Inno Setup script — per-user install, no admin needed.
+; Inno Setup script -- per-user install, no admin needed.
 ; Build: iscc installer.iss   (CI passes /DMyAppVersion=x.y.z)
 
 #ifndef MyAppVersion
@@ -22,7 +22,12 @@ UninstallDisplayIcon={app}\Snap.exe
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-CloseApplications=yes
+; Snap hides to the tray instead of closing, so Restart Manager's WM_CLOSE only made it
+; disappear and setup then failed with "cannot close the application" against a locked
+; Snap.exe. AppMutex detects the instance up front -- tray-hidden, no window, still caught --
+; and asks the user to quit it, which is actionable where the silent failure was not.
+AppMutex=Global\SnapDownloaderApp
+CloseApplications=no
 LicenseFile=LICENSE
 
 [Tasks]
