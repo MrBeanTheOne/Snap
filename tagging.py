@@ -54,7 +54,7 @@ def apply_tags(path, tags):
     if ext == ".mp3":
         from mutagen.easyid3 import EasyID3
         f = EasyID3(path)
-    elif ext == ".m4a":
+    elif ext in (".m4a", ".mp4"):
         from mutagen.easymp4 import EasyMP4
         f = EasyMP4(path)
     elif ext == ".flac":
@@ -70,12 +70,41 @@ def apply_tags(path, tags):
     f.save()
 
 
+def _clean(t):
+    """Video title → bare 'Artist - Song': drop '| channel' tails, brackets, karaoke junk."""
+    t = re.sub(r"[\(\[][^)\]]*[\)\]]", "", t.split("|")[0])
+    t = re.sub(r"(?i)\bin the style of\b.*|\bkaraoke( version)?\b|\binstrumental\b|\b(with )?lyrics\b", "", t)
+    return " ".join(t.split()).strip(" -")
+
+
 def tag_from_title(path, video_title):
-    """Parse 'Artist - Title (junk)' from a video title, look it up, tag the file."""
-    clean = re.sub(r"[\(\[][^)\]]*[\)\]]", "", video_title).strip()
-    artist, _, title = clean.partition(" - ")
-    if not title:
-        artist, title = "", clean
-    tags = mb_lookup(artist.strip(), title.strip())
-    if tags:
-        apply_tags(path, tags)
+    """Parse the video title, look it up, tag the file and rename it 'Artist - Title.ext'.
+    Karaoke versions keep a '(Karaoke)' marker + genre so they never blend with originals.
+    Returns the file's final path."""
+    karaoke = "karaoke" in video_title.lower()
+    clean = _clean(video_title)
+    a, _, b = clean.partition(" - ")
+    style = re.search(r"(?i)in the style of ([^)\]|]+)", video_title)  # Stingray/Party Tyme
+    # KaraFun puts 'Song - Artist', Sing King 'Artist - Song': try both, MB's score picks
+    tries = [(style.group(1), clean)] if style else []
+    tries += [(a, b), (b, a)] if b else [("", clean)]
+    tags = None
+    for artist, title in tries:
+        tags = mb_lookup(artist.strip(), title.strip())
+        if tags:
+            break
+    if karaoke:
+        tags = dict(tags or {}, genre="Karaoke")
+        if "title" in tags:
+            tags["title"] += " (Karaoke)"
+    if not tags:
+        return path
+    apply_tags(path, tags)
+    if "artist" not in tags or "title" not in tags:
+        return path  # no confident match — keep the original name
+    name = "".join("_" if c in '<>:"/\\|?*' else c for c in f"{tags['artist']} - {tags['title']}")
+    new = os.path.join(os.path.dirname(path), name.strip(" .")[:150] + os.path.splitext(path)[1])
+    if os.path.exists(new):
+        return path  # never overwrite (same song from another channel, or same name)
+    os.rename(path, new)
+    return new

@@ -57,6 +57,7 @@ DEFAULT_SETTINGS = {
 }
 VIDEO_MODES = ("mp4", "mkv")
 TAGGABLE = ("mp3", "m4a", "flac", "opus")  # wav is tagless PCM
+TAG_MODES = TAGGABLE + VIDEO_MODES  # mkv: rename only (Windows can't read its tags)
 AUDIO_FMT = {  # prefer streams that avoid a lossy re-encode
     "m4a": "bestaudio[ext=m4a]/bestaudio/best",
     "opus": "bestaudio[acodec=opus]/bestaudio/best",
@@ -644,9 +645,9 @@ class Api:
             err = (proc.stderr.read() or b"").decode(errors="replace").strip().splitlines()
             raise RuntimeError("ffmpeg: " + (err[-1] if err else "conversion failed"))
         job["filepath"] = dst
-        if job["mode"] in TAGGABLE and self.settings.get("mb_tag", True):
+        if job["mode"] in TAG_MODES and self.settings.get("mb_tag", True):
             try:
-                tagging.tag_from_title(dst, job["title"])
+                job["filepath"] = tagging.tag_from_title(dst, job["title"])
             except Exception:
                 pass
 
@@ -706,6 +707,15 @@ class Api:
                 # MKV takes any codec — the only way to get 4K+ VP9/AV1 streams
                 opts["format"] = f"bestvideo[height<={q}]+bestaudio/best[height<={q}]/best"
             opts["merge_output_format"] = job["mode"]
+            # no FFmpegMetadata: it would tag the uploader (KaraFun, Sing King) as the artist;
+            # tag_from_title writes artist/title after the download instead
+            opts["writethumbnail"] = True
+            opts["postprocessors"] = [
+                {"key": "FFmpegThumbnailsConvertor", "format": "jpg"},
+                {"key": "EmbedThumbnail"},
+            ]
+            if job["subs"]:  # embedded, so the rename can't orphan sidecar .vtt files
+                opts["postprocessors"].insert(0, {"key": "FFmpegEmbedSubtitle"})
         else:
             opts["format"] = AUDIO_FMT.get(job["mode"], "bestaudio/best")
             extract = {"key": "FFmpegExtractAudio", "preferredcodec": job["mode"]}
@@ -740,9 +750,9 @@ class Api:
         job["filepath"] = rd[0].get("filepath", "")
         if not job["thumb"]:
             job["thumb"] = (info or {}).get("thumbnail") or ""
-        if job["mode"] in TAGGABLE and self.settings.get("mb_tag", True) and job["filepath"]:
+        if job["mode"] in TAG_MODES and self.settings.get("mb_tag", True) and job["filepath"]:
             try:
-                tagging.tag_from_title(job["filepath"], job["title"])
+                job["filepath"] = tagging.tag_from_title(job["filepath"], job["title"])
             except Exception:
                 pass  # best-effort — the yt-dlp tags are already written
 

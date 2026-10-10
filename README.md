@@ -24,6 +24,7 @@ A fast, no-nonsense desktop downloader for Windows — a native GUI over
 - **7 formats** — MP4, MKV (for 4K+ VP9/AV1), MP3, M4A, FLAC, WAV, OPUS
 - **No wasted re-encodes** — M4A and OPUS keep YouTube's original stream bit-for-bit
 - **Proper music files** — embedded cover art plus real artist / album / year tags looked up on MusicBrainz
+- **Karaoke-ready files** — music and karaoke videos are tagged and named `Artist - Title`; karaoke versions keep a `(Karaoke)` marker and the Karaoke genre so they never mix with the originals
 - **Clip / trim** — grab just `0:30 – 1:45` of a video, keyframe-exact, in any format
 - **Convert local files** — drop any media file on the window and re-format it with the bundled ffmpeg
 - **Subtitles** — optional, with a language picker
