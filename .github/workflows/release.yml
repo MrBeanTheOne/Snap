@@ -28,7 +28,9 @@ jobs:
         run: Add-Content $env:GITHUB_PATH "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin"
 
       - name: Install dependencies
-        run: pip install pywebview yt-dlp yt-dlp-ejs mutagen pystray pillow pyinstaller
+        # certifi is explicit: plain yt-dlp installs no deps, and updater.py needs the CA
+        # bundle to reach GitHub on machines with a stale Windows cert store (v4.12.2)
+        run: pip install pywebview yt-dlp yt-dlp-ejs certifi mutagen pystray pillow pyinstaller
 
       - name: Build
         run: python -m PyInstaller Snap.spec --noconfirm

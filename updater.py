@@ -23,7 +23,7 @@ except Exception:
 def _urlopen(url_or_req, timeout):
     return urllib.request.urlopen(url_or_req, timeout=timeout, context=_SSL_CTX)
 
-APP_VERSION = "4.12.1"
+APP_VERSION = "4.12.2"
 REPO = "MrBeanTheOne/Snap"
 STATE_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Snap")
 PKG_DIR = os.path.join(STATE_DIR, "pkgs")  # in-app yt-dlp updates land here, shadowing the bundled copy
