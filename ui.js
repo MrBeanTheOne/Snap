@@ -144,6 +144,7 @@ async function fetchInfo(tab) {
     moreWrap.style.display = info.more ? '' : 'none';
     dlnote.textContent = '';
     updateCount();
+    fitPlist();
   } else {
     thumb.style.display = ''; thumb.src = info.thumbnail || '';
     modeSeg.style.display = ''; qual.style.display = isVideo(curMode()) ? '' : 'none';
@@ -184,6 +185,7 @@ async function loadMore() {
   filterList();  // keep an active filter applied to the new rows
   updateCount();
   moreWrap.style.display = r.more ? '' : 'none';
+  fitPlist();
 }
 
 function entryRows() { return [...plist.querySelectorAll('.entry')]; }
@@ -208,8 +210,10 @@ function filterList() {
 
 function toggleAll() {
   for (const r of visibleRows()) {
-    r.querySelector('input[type=checkbox]').checked = selAll.checked;
-    r.classList.toggle('off', !selAll.checked);
+    // "All" must not drag already-downloaded rows back in while skip is on
+    const on = selAll.checked && !(skipDl.checked && r.querySelector('.dlbadge'));
+    r.querySelector('input[type=checkbox]').checked = on;
+    r.classList.toggle('off', !on);
   }
   updateCount();
 }
@@ -306,13 +310,43 @@ function jobRow(j) {
 }
 
 const TABS = [['videos', 'Videos'], ['shorts', 'Shorts'], ['streams', 'Live']];
-let watchCache = [], editWatch = null;
+let watchCache = [], editWatch = null, lastWatchJSON = '';
 
 function renderWatches(list) {
   watches.innerHTML = list.map(watchRow).join('');
   chEmpty.style.display = list.length ? 'none' : '';
 }
-function openEdit(id) { editWatch = id; renderWatches(watchCache); }
+let ignCount = 0;  // ignores stacked since the last snackbar dismiss (session-only)
+async function ignorePend(id, url) {
+  const w = watchCache.find(x => x.id === id);
+  await api().ignore_pending(id, url);
+  if (w) {  // update the row NOW — waiting for the next poll reads as "nothing happened"
+    ignCount += url === '*' ? w.pending.length : 1;
+    w.pending = url === '*' ? [] : w.pending.filter(p => p.url !== url);
+  }
+  renderWatches(watchCache);
+  snackTxt.textContent = `${ignCount} release${ignCount !== 1 ? 's' : ''} ignored`;
+  snack.style.display = '';
+}
+async function undoIgnore() {
+  await api().restore_pending();  // puts back everything stacked, across all channels
+  lastWatchJSON = '';             // next poll re-renders with the restored items
+  dismissSnack(false);
+}
+function dismissSnack(clear = true) {
+  if (clear) api().clear_ignored();  // dismissed = gone for good; next ignore starts a new stack
+  ignCount = 0;
+  snack.style.display = 'none';
+}
+let collapsedWatches;
+try { collapsedWatches = new Set(JSON.parse(localStorage.getItem('wcol') || '[]')); }
+catch { collapsedWatches = new Set(); }
+function toggleCol(id) {
+  collapsedWatches.has(id) ? collapsedWatches.delete(id) : collapsedWatches.add(id);
+  try { localStorage.setItem('wcol', JSON.stringify([...collapsedWatches])); } catch {}
+  renderWatches(watchCache);
+}
+function openEdit(id) { editWatch = id; collapsedWatches.delete(id); renderWatches(watchCache); }
 function closeEdit() { editWatch = null; renderWatches(watchCache); }
 
 async function saveEdit(id) {
@@ -324,6 +358,18 @@ async function saveEdit(id) {
   closeEdit();
 }
 
+// size the result list so the PAGE never scrolls: start from the CSS fallback,
+// then absorb the measured leftover/overflow — no guessed constants
+function fitPlist() {
+  if (plist.style.display !== 'block') return;
+  plist.style.maxHeight = '';  // back to the CSS fallback, then measure
+  // free space (or overflow) = viewport bottom vs where the page content really ends;
+  // scrollHeight can't see free space (it's floored at clientHeight), the body rect can
+  const slack = document.documentElement.clientHeight - document.body.getBoundingClientRect().bottom;
+  plist.style.maxHeight = Math.max(160, plist.getBoundingClientRect().height + slack) + 'px';
+}
+window.addEventListener('resize', fitPlist);
+
 const isChannelUrl = u => /youtube\.com\/(@|channel\/|c\/|user\/)/.test(u || '');
 
 function watchRow(w) {
@@ -332,6 +378,7 @@ function watchRow(w) {
   const pend = w.pending.map(p => `
     <div class="newvid"><span>${esc(p.title)}</span>
       <button class="mini go" onclick='api().download_pending(${w.id}, ${JSON.stringify(p.url)})'>Download</button>
+      <button class="mini ghost" onclick='ignorePend(${w.id}, ${JSON.stringify(p.url)})' title="Ignore this release">✕</button>
     </div>`).join('');
   const edit = w.id === editWatch ? `
     <div class="wedit" id="we-${w.id}">
@@ -347,12 +394,13 @@ function watchRow(w) {
   const ava = w.thumb
     ? `<img class="wava" src="${esc(w.thumb)}" alt="" loading="lazy">`
     : `<div class="wava">${esc((w.title || '?').trim()[0].toUpperCase())}</div>`;
+  const col = collapsedWatches.has(w.id);
   return `
-    <div class="watch">
+    <div class="watch${col ? ' col' : ''}">
       ${ava}
       <div class="wmain">
       <div class="top">
-        <div class="wtitle">${w.pending.length ? '<span class="dot">●</span> ' : ''}${esc(w.title)}</div>
+        <div class="wtitle" onclick="toggleCol(${w.id})" title="${col ? 'Expand' : 'Collapse'}">${w.pending.length ? '<span class="dot">●</span> ' : ''}${esc(w.title)}${col && w.pending.length ? ` <span class="muted">· ${w.pending.length} new</span>` : ''}</div>
         <div class="side">
           <label class="chk"><input type="checkbox" ${w.auto ? 'checked' : ''} onchange="api().toggle_auto(${w.id})">auto</label>
           <button class="mini ghost" onclick="openEdit(${w.id})" title="Edit watch">✎ Edit</button>
@@ -361,15 +409,16 @@ function watchRow(w) {
         </div>
       </div>
       <div class="sub">${w.mode.toUpperCase()}${isVideo(w.mode) ? ' ' + w.quality + 'p' : ''} · ${chan ? tabs.join(' + ') : 'playlist'} · checked ${esc(w.checked || 'never')}</div>
+      ${col ? '' : `
       ${w.error ? `<div class="werr">${esc(friendly(w.error))}</div>` : ''}
       ${edit}
-      ${w.pending.length > 1 ? `<div class="newvid"><span></span><button class="mini go" onclick='api().download_pending(${w.id}, "*")'>Download all ${w.pending.length}</button></div>` : ''}
-      ${pend}
+      ${w.pending.length > 1 ? `<div class="newvid"><span></span><button class="mini go" onclick='api().download_pending(${w.id}, "*")'>Download all ${w.pending.length}</button><button class="mini ghost" onclick='ignorePend(${w.id}, "*")'>Ignore all</button></div>` : ''}
+      ${pend}`}
       </div>
     </div>`;
 }
 
-let statusFilter = 'all';
+let statusFilter = 'all', lastJobsHTML = null;
 const FILT = {
   all: () => true,
   downloading: j => ['downloading', 'converting', 'cancelling'].includes(j.status),
@@ -400,9 +449,10 @@ async function poll() {
   const q = jobFilter.value.trim().toLowerCase();
   const shown = jobList.filter(FILT[statusFilter])
     .filter(j => !q || (j.title || '').toLowerCase().includes(q));
-  jobs.innerHTML = shown.length
+  const jh = shown.length
     ? shown.slice().reverse().map(jobRow).join('')
     : `<div class="empty">${q || statusFilter !== 'all' ? 'No downloads match.' : 'Nothing yet — grab something from the Search tab.'}</div>`;
+  if (jh !== lastJobsHTML) { lastJobsHTML = jh; jobs.innerHTML = jh; }  // same click-swallow guard as watches
   const active = jobList.filter(j => !['done', 'error', 'cancelled'].includes(j.status)).length;
   dlBadge.style.display = active ? '' : 'none';
   dlBadge.textContent = active;
@@ -410,7 +460,10 @@ async function poll() {
   chBadge.style.display = pending ? '' : 'none';
   chBadge.textContent = pending;
   watchCache = watchList;
-  if (editWatch === null) renderWatches(watchList);  // don't wipe an open edit panel
+  // re-render only on real change: a steady 500ms innerHTML rewrite can swallow a
+  // click that lands mid-press (the node under the cursor gets replaced)
+  const wj = JSON.stringify(watchList);
+  if (editWatch === null && wj !== lastWatchJSON) { lastWatchJSON = wj; renderWatches(watchList); }
 }
 
 let SET = {};

@@ -135,6 +135,7 @@ class Api:
         self.out_dir = os.path.join(os.path.expanduser("~"), "Downloads", "Snap")
         self.jobs = []
         self.watches = []
+        self._ignored = {}  # watch_id → last ignored pending items; session-only undo
         self.settings = dict(DEFAULT_SETTINGS)
         try:
             with open(STATE_FILE, encoding="utf-8") as f:
@@ -474,6 +475,30 @@ class Api:
                 w["pending"].remove(p)
         self._save()
 
+    def ignore_pending(self, watch_id, url):
+        w = self._watch(watch_id)
+        if not w:
+            return
+        # already in w["seen"], so a dismissed video never re-triggers on the next check
+        gone = [p for p in w["pending"] if url in ("*", p["url"])]
+        if not gone:
+            return
+        self._ignored.setdefault(watch_id, []).extend(gone)  # stacks until undo/dismiss; lost on restart
+        w["pending"] = [p for p in w["pending"] if p not in gone]
+        self._save()
+
+    def restore_pending(self):
+        # undo EVERYTHING stacked since the last dismiss, across all watches
+        for wid, items in self._ignored.items():
+            w = self._watch(wid)
+            if w:
+                w["pending"].extend(items)
+        self._ignored = {}
+        self._save()
+
+    def clear_ignored(self):
+        self._ignored = {}
+
     def get_watches(self):
         return self.watches
 
@@ -770,7 +795,7 @@ if __name__ == "__main__":
     api.pending_url = winshell.url_from_argv()  # snap:// link that launched this instance
     window = webview.create_window(
         "Snap", os.path.join(BASE, "ui.html"),
-        js_api=api, width=860, height=720, min_size=(600, 480),
+        js_api=api, width=860, height=720, min_size=(780, 480),  # below ~780 the nav tabs clip
         hidden="--tray" in sys.argv,  # autostart launches straight to the tray
     )
 
