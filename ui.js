@@ -31,6 +31,7 @@ function showTab(t) {
     document.getElementById('nav-' + x).classList.toggle('on', x === t);
   }
   if (t === 'lib') loadLibrary();
+  if (t === 'grab') fitPlist();  // window may have been resized while another tab was up
 }
 
 // ---- library ----
@@ -362,6 +363,7 @@ async function saveEdit(id) {
 // then absorb the measured leftover/overflow — no guessed constants
 function fitPlist() {
   if (plist.style.display !== 'block') return;
+  if (!plist.offsetParent) return;  // Search tab hidden: rects are 0, showTab refits later
   plist.style.maxHeight = '';  // back to the CSS fallback, then measure
   // free space (or overflow) = viewport bottom vs where the page content really ends;
   // scrollHeight can't see free space (it's floored at clientHeight), the body rect can
@@ -600,6 +602,9 @@ function renderUpdate(r) {
     updButton(`Update Snap to ${r.app_latest}`, () => api().update_app(), true);
   } else if (r.available) {
     updButton(`Update yt-dlp to ${r.latest}`, () => api().update_ytdlp());
+  } else if (r.app_error) {
+    updMsg.textContent = `yt-dlp ${r.latest} — couldn’t check for app updates`;
+    updMsg.title = r.app_error;  // full reason on hover, like the other update errors
   } else {
     updMsg.textContent = `Up to date (yt-dlp ${r.latest})`;
   }

@@ -3,13 +3,27 @@ import io
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sys
 import urllib.request
 import webbrowser
 import zipfile
 
-APP_VERSION = "4.12.0"
+# Windows' cert store can lack a newer intermediate (schannel AIA-fetches it, OpenSSL
+# won't), which killed every GitHub call on one machine — certifi's bundle is current
+# and already ships in the frozen build. Fall back to the system store without it.
+try:
+    import certifi
+    _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+except Exception:
+    _SSL_CTX = None
+
+
+def _urlopen(url_or_req, timeout):
+    return urllib.request.urlopen(url_or_req, timeout=timeout, context=_SSL_CTX)
+
+APP_VERSION = "4.12.1"
 REPO = "MrBeanTheOne/Snap"
 STATE_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Snap")
 PKG_DIR = os.path.join(STATE_DIR, "pkgs")  # in-app yt-dlp updates land here, shadowing the bundled copy
@@ -56,7 +70,7 @@ def check_update():
 
     out = {}
     try:
-        with urllib.request.urlopen("https://pypi.org/pypi/yt-dlp/json", timeout=10) as r:
+        with _urlopen("https://pypi.org/pypi/yt-dlp/json", timeout=10) as r:
             latest = json.load(r)["info"]["version"]
         cur = yt_dlp.version.__version__
         out.update({"current": cur, "latest": latest, "available": _v(latest) > _v(cur)})
@@ -66,14 +80,16 @@ def check_update():
                          (f"https://api.github.com/repos/{REPO}/tags", "name")):
         try:
             req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github+json"})
-            with urllib.request.urlopen(req, timeout=10) as r:
+            with _urlopen(req, timeout=10) as r:
                 data = json.load(r)
             tag = (data[0] if isinstance(data, list) else data)[key].lstrip("v")
             out.update({"app_current": APP_VERSION, "app_latest": tag,
                         "app_available": _v(tag) > _v(APP_VERSION)})
             break
-        except Exception:
-            continue  # no releases/tags yet or offline — the yt-dlp result is still useful
+        except Exception as e:
+            app_err = str(e)[:120]  # try the tags fallback — the yt-dlp result is still useful
+    else:
+        out["app_error"] = app_err  # both GitHub endpoints failed: say so, a silent skip reads as "up to date"
     return out
 
 
@@ -85,10 +101,10 @@ def update_ytdlp():
         shutil.rmtree(new, ignore_errors=True)
         os.makedirs(new)
         for pkg in ("yt-dlp", "yt-dlp-ejs"):
-            with urllib.request.urlopen(f"https://pypi.org/pypi/{pkg}/json", timeout=10) as r:
+            with _urlopen(f"https://pypi.org/pypi/{pkg}/json", timeout=10) as r:
                 meta = json.load(r)
             whl = next(u["url"] for u in meta["urls"] if u["filename"].endswith(".whl"))
-            with urllib.request.urlopen(whl, timeout=120) as r:
+            with _urlopen(whl, timeout=120) as r:
                 zipfile.ZipFile(io.BytesIO(r.read())).extractall(new)
         return {"ok": True}  # swapped into pkgs/ by apply_pending() on next launch
     except Exception as e:
@@ -116,7 +132,7 @@ def update_app():
             f"https://api.github.com/repos/{REPO}/releases/latest",
             headers={"Accept": "application/vnd.github+json"},
         )
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with _urlopen(req, timeout=10) as r:
             assets = json.load(r).get("assets") or []
         url = next((a["browser_download_url"] for a in assets if a["name"].endswith(".zip")), "")
     except Exception as e:
@@ -153,7 +169,7 @@ def _stage_release(url, inst):
     zf = os.path.join(stage, "snap.zip")
     PROGRESS.update(pct=0, stage="downloading")
     got = 0
-    with urllib.request.urlopen(url, timeout=600) as r, open(zf, "wb") as f:
+    with _urlopen(url, timeout=600) as r, open(zf, "wb") as f:
         total = int(r.headers.get("Content-Length") or 0)
         while True:
             chunk = r.read(262144)

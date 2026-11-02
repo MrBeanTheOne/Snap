@@ -183,7 +183,7 @@ class Api:
         items = None
         search = not re.match(r"https?://", url)
         if search:
-            url = f"ytsearch12:{url}"  # plain words → top YouTube results in the picker
+            url = f"ytsearch24:{url}"  # plain words → top YouTube results in the picker (24 fills a tall window)
         channel = not search and self._is_channel(url) and "/playlists" not in url
         if channel:
             # a channel root makes yt-dlp walk every tab (slow) and returns tab playlists,
