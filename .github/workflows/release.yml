@@ -22,10 +22,16 @@ jobs:
           deno-version: v2.x
 
       - name: Install ffmpeg
-        run: choco install ffmpeg -y --no-progress
-
-      - name: Put the real ffmpeg on PATH (not choco's 9KB shim)
-        run: Add-Content $env:GITHUB_PATH "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin"
+        # gyan.dev's essentials build (what choco repackages) straight from Gyan's GitHub mirror:
+        # the choco feed 504'd for v4.13.0 and still exited 0 with "installed 0/0 packages"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download -R GyanD/codexffmpeg --pattern '*-essentials_build.zip' -O ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg
+          $bin = (Get-ChildItem ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1).DirectoryName
+          if (-not $bin) { throw 'ffmpeg.exe not in the download' }
+          Add-Content $env:GITHUB_PATH $bin
 
       - name: Install dependencies
         # certifi is explicit: plain yt-dlp installs no deps, and updater.py needs the CA
@@ -64,7 +70,8 @@ jobs:
         run: Compress-Archive -Path dist/Snap -DestinationPath Snap-win64.zip
 
       - name: Install Inno Setup
-        run: choco install innosetup -y --no-progress
+        # the runner image ships it (6.7.x); choco only as a fallback — its feed was down for v4.13.0
+        run: if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
 
       - name: Installer
         run: |
