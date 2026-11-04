@@ -21,6 +21,8 @@ const FRIENDLY = [
   [/403.*forbidden/i, 'YouTube refused the download — try “check for updates” in Settings'],
   [/unsupported url|is not a valid url/i, 'That link doesn’t look like something Snap can download'],
   [/getaddrinfo|timed out|connection|network is unreachable/i, 'Network problem — check your connection'],
+  // last on purpose: only catches what nothing above does (Instagram/Facebook login walls)
+  [/login required|--cookies/i, 'This site needs you signed in — sign in on Edge, then turn on Edge login in Settings'],
 ];
 function friendly(e) {
   if (!e) return '';

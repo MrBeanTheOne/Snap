@@ -769,6 +769,10 @@ class Api:
             # parallel fragments speed up DASH/HLS/SABR streams; no effect on plain https
             "concurrent_fragment_downloads": 4,
         }
+        if re.search(r"tiktok\.com|instagram\.com|facebook\.com|fb\.watch", job["url"]):
+            # social sites use the whole caption as the title — cap it so the path fits
+            # Windows' 260-char limit; YouTube keeps the template above untouched
+            opts["outtmpl"] = os.path.join(out, "%(title).150B.%(ext)s")
         if job["subs"]:
             langs = self.settings.get("sub_lang", "en").split(",")
             opts.update(

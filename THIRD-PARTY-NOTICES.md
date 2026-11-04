@@ -18,6 +18,8 @@ the license texts are available at the links below and from each project.
 | [requests](https://github.com/psf/requests) | 2.34.2 | Apache-2.0 | github.com/psf/requests |
 | [urllib3](https://github.com/urllib3/urllib3) | 2.7.0 | MIT | github.com/urllib3/urllib3 |
 | [websockets](https://github.com/python-websockets/websockets) | 15.0.1 | BSD 3-Clause | github.com/python-websockets/websockets |
+| [curl_cffi](https://github.com/lexiforest/curl_cffi) | 0.17.0 | MIT (bundles libcurl-impersonate: curl license; BoringSSL: ISC/OpenSSL) | github.com/lexiforest/curl_cffi |
+| [cffi](https://github.com/python-cffi/cffi) | 2.1.1 | MIT | github.com/python-cffi/cffi |
 
 ## Bundled executables (invoked as separate programs)
 

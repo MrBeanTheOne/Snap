@@ -36,7 +36,9 @@ jobs:
       - name: Install dependencies
         # certifi is explicit: plain yt-dlp installs no deps, and updater.py needs the CA
         # bundle to reach GitHub on machines with a stale Windows cert store (v4.12.2)
-        run: pip install pywebview yt-dlp yt-dlp-ejs certifi mutagen pystray pillow pyinstaller
+        # curl_cffi: browser impersonation TikTok demands; yt-dlp only routes impersonated
+        # requests through it (preference -100), so YouTube is untouched. <0.18 = yt-dlp's supported range
+        run: pip install pywebview yt-dlp yt-dlp-ejs certifi mutagen pystray pillow pyinstaller "curl_cffi>=0.10,<0.18"
 
       - name: Self-check
         # offline: watch seeding, state safety, tagging fallbacks, updater swap + hashes, media server
@@ -57,6 +59,7 @@ jobs:
           & dist/Snap/_internal/deno.exe --version
           if ($LASTEXITCODE) { throw 'bundled deno does not run' }
           if (-not (Test-Path dist/Snap/_internal/certifi/cacert.pem)) { throw 'certifi CA bundle missing' }
+          if (-not (Test-Path dist/Snap/_internal/curl_cffi/_wrapper*.pyd)) { throw 'curl_cffi missing (TikTok needs it)' }
           $p = Start-Process dist/Snap/Snap.exe -PassThru
           Start-Sleep 20
           $p.Refresh()
