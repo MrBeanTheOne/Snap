@@ -5,6 +5,8 @@ import hashlib
 import http.server
 import mimetypes
 import os
+import re
+import secrets
 import subprocess
 import threading
 import urllib.parse
@@ -72,6 +74,9 @@ def _cover(path, ext, ffmpeg):
 _PORT = None
 _GET_OUT = None
 _FFMPEG = None
+# unguessable URL prefix: any web page can aim <video>/<img> at 127.0.0.1:<port>, and DNS
+# rebinding lets one read the bytes — neither knows this
+_TOKEN = secrets.token_urlsafe(16)
 
 
 def _resolve(rel):
@@ -93,6 +98,9 @@ class _MediaHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         p = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
+        if not p.startswith(f"/{_TOKEN}/"):
+            return self.send_error(404)
+        p = p[len(_TOKEN) + 1:]
         if p.startswith("/cover/"):
             # made HERE, not in scan(): the <img> is lazy, so only cards scrolled into view
             # pay for an ffmpeg frame grab, each on its own server thread
@@ -112,10 +120,17 @@ class _MediaHandler(http.server.BaseHTTPRequestHandler):
         start, end = 0, size - 1
         rng = self.headers.get("Range", "")
         if rng.startswith("bytes="):
-            s, _, e = rng[len("bytes="):].partition("-")
-            start = int(s) if s else max(0, size - int(e))
-            if s and e:
-                end = min(int(e), size - 1)
+            m = re.fullmatch(r"bytes=(\d*)-(\d*)", rng.strip())  # one range; multi-range → 416
+            s, e = m.groups() if m else ("", "")
+            if s:
+                start, end = int(s), (min(int(e), size - 1) if e else size - 1)
+            elif e:
+                start = max(0, size - int(e))  # suffix: the last e bytes
+            if not (s or e) or start > end:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.end_headers()
+                return
             self.send_response(206)
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         else:
@@ -176,8 +191,8 @@ def scan(out_dir):
                 "size": st.st_size,
                 "mtime": int(st.st_mtime),
                 # ?v=mtime: an edited file must not show the browser-cached old cover
-                "cover_url": f"http://127.0.0.1:{_PORT}/cover/{rel}?v={st.st_mtime_ns}",
-                "media_url": f"http://127.0.0.1:{_PORT}/media/{rel}",
+                "cover_url": f"http://127.0.0.1:{_PORT}/{_TOKEN}/cover/{rel}?v={st.st_mtime_ns}",
+                "media_url": f"http://127.0.0.1:{_PORT}/{_TOKEN}/media/{rel}",
             })
     items.sort(key=lambda x: -x["mtime"])
     return items

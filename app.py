@@ -204,7 +204,8 @@ class Api:
     def get_info(self, url, tab="videos", offset=0, count=100):
         url = url.strip()
         items = None
-        search = not re.match(r"https?://", url)
+        # any scheme is a link (yt-dlp says if it's unsupported) — only plain words search
+        search = not re.match(r"[a-z][\w+.-]*://", url, re.I)
         if search:
             url = f"ytsearch24:{url}"  # plain words → top YouTube results in the picker (24 fills a tall window)
         channel = not search and self._is_channel(url) and "/playlists" not in url
@@ -222,6 +223,7 @@ class Api:
             return {"error": str(e)}
 
         if info.get("_type") == "playlist":
+            raw = list(info.get("entries") or [])  # unavailable videos come back as None
             entries = [
                 {
                     "url": e.get("url") or e.get("webpage_url"),
@@ -229,7 +231,7 @@ class Api:
                     "thumb": (e.get("thumbnails") or [{}])[-1].get("url", ""),
                     "dl": self.downloaded.get(self._dlkey(e.get("url") or "")),
                 }
-                for e in info.get("entries", [])
+                for e in raw
                 if e
             ]
             return {
@@ -237,7 +239,10 @@ class Api:
                 "search": search,
                 "title": info.get("title", "Playlist"),
                 "entries": entries,
-                "more": bool(channel and count and len(entries) == count),
+                # paging counts RAW items: dropped Nones must neither end paging early
+                # nor shift the next page's offset (which would skip videos)
+                "more": bool(channel and count and len(raw) == count),
+                "next": offset + len(raw),
             }
         heights = sorted(
             {f["height"] for f in info.get("formats", []) if f.get("height")},
@@ -297,8 +302,11 @@ class Api:
     def redo(self, job_id):
         j = self._job(job_id)
         if j:
-            self.enqueue(j["url"], j["mode"], j["quality"], j["title"], j["subs"], j.get("thumb", ""),
-                         j.get("folder", ""), j.get("clip_a", ""), j.get("clip_b", ""))
+            nid = self.enqueue(j["url"], j["mode"], j["quality"], j["title"], j["subs"], j.get("thumb", ""),
+                               j.get("folder", ""), j.get("clip_a", ""), j.get("clip_b", ""))
+            # the renamed 'Artist - Title' file is THIS video's: the redo may replace it
+            # instead of leaving a second copy under the raw video title
+            self._job(nid)["replaces"] = j.get("filepath", "")
 
     def cancel(self, job_id):
         j = self._job(job_id)
@@ -630,7 +638,10 @@ class Api:
         if new:
             verb = "downloading" if w["auto"] else "new"
             self._notify(w["title"], f"{new} {verb} video{'s' if new != 1 else ''}")
-        w["seen"] = w["seen"][-3000:]  # big enough that a large synced playlist never re-triggers
+        if self._is_channel(w["url"]):
+            # channels fetch only their newest 15, so old ids never come back; a playlist is
+            # fetched in FULL and keeps every id, or its oldest items re-trigger as new
+            w["seen"] = w["seen"][-3000:]
         w["checked"] = time.strftime("%H:%M")
         w["error"] = errs[0] if errs else ""
         self._save()
@@ -683,7 +694,10 @@ class Api:
     def _convert(self, job):
         """Local file → chosen format with the bundled ffmpeg. Video modes remux (-c copy)."""
         src = job["url"]
-        dst = os.path.join(self.out_dir, os.path.splitext(os.path.basename(src))[0] + "." + job["mode"])
+        base = os.path.join(self.out_dir, os.path.splitext(os.path.basename(src))[0])
+        dst, n = f"{base}.{job['mode']}", 1
+        while os.path.exists(dst):  # -y below must never clobber a file — or the source itself
+            dst, n = f"{base} ({n}).{job['mode']}", n + 1
         os.makedirs(self.out_dir, exist_ok=True)
         job["status"] = "converting"
         args = [FFMPEG, "-y", "-i", src]
@@ -714,9 +728,10 @@ class Api:
             err = (proc.stderr.read() or b"").decode(errors="replace").strip().splitlines()
             raise RuntimeError("ffmpeg: " + (err[-1] if err else "conversion failed"))
         job["filepath"] = dst
-        if job["mode"] in TAG_MODES and self.settings.get("mb_tag", True):
+        # ffmpeg carried the source's own tags over — those beat a guess from the filename
+        if job["mode"] in TAG_MODES and self.settings.get("mb_tag", True) and not tagging.has_tags(dst):
             try:
-                job["filepath"] = tagging.tag_from_title(dst, job["title"])
+                job["filepath"] = tagging.tag_from_title(dst, os.path.splitext(job["title"])[0])
             except Exception:
                 pass
 
@@ -821,7 +836,7 @@ class Api:
             job["thumb"] = (info or {}).get("thumbnail") or ""
         if job["mode"] in TAG_MODES and self.settings.get("mb_tag", True) and job["filepath"]:
             try:
-                job["filepath"] = tagging.tag_from_title(job["filepath"], job["title"])
+                job["filepath"] = tagging.tag_from_title(job["filepath"], job["title"], job.get("replaces", ""))
             except Exception:
                 pass  # best-effort — the yt-dlp tags are already written
 

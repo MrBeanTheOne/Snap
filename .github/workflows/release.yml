@@ -32,8 +32,33 @@ jobs:
         # bundle to reach GitHub on machines with a stale Windows cert store (v4.12.2)
         run: pip install pywebview yt-dlp yt-dlp-ejs certifi mutagen pystray pillow pyinstaller
 
+      - name: Self-check
+        # offline: watch seeding, state safety, tagging fallbacks, updater swap + hashes, media server
+        run: python test_app.py
+
       - name: Build
         run: python -m PyInstaller Snap.spec --noconfirm
+
+      - name: Smoke-test the build
+        # every broken release so far (choco ffmpeg shim, missing certifi) shipped a build
+        # nobody had launched — check the bundled tools, then that the exe opens its window
+        run: |
+          foreach ($t in 'ffmpeg', 'ffprobe') {
+            $v = & "dist/Snap/_internal/$t.exe" -version  # capture first: piping can cut the exe short
+            if ($LASTEXITCODE) { throw "bundled $t does not run" }
+            $v[0]
+          }
+          & dist/Snap/_internal/deno.exe --version
+          if ($LASTEXITCODE) { throw 'bundled deno does not run' }
+          if (-not (Test-Path dist/Snap/_internal/certifi/cacert.pem)) { throw 'certifi CA bundle missing' }
+          $p = Start-Process dist/Snap/Snap.exe -PassThru
+          Start-Sleep 20
+          $p.Refresh()
+          if ($p.HasExited) { throw "Snap.exe exited early (code $($p.ExitCode))" }
+          $title = $p.MainWindowTitle  # a crash shows 'Unhandled exception in script' instead
+          Stop-Process -Id $p.Id -Force
+          if ($title -ne 'Snap') { throw "expected the Snap window, got '$title'" }
+          "Snap.exe up with its window"
 
       - name: Zip
         run: Compress-Archive -Path dist/Snap -DestinationPath Snap-win64.zip

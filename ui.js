@@ -187,9 +187,10 @@ function entryRowHTML(e) {
 async function loadMore() {
   if (!info || !info.playlist) return;
   moreBtn.disabled = true; moreBtn.textContent = 'Loading…';
-  const r = await api().get_info(info.url, chTab, info.entries.length, SET.page_size || 100);
+  const r = await api().get_info(info.url, chTab, info.next, SET.page_size || 100);
   moreBtn.disabled = false; moreBtn.textContent = `Load ${SET.page_size || 100} more`;
   if (r.error || !r.playlist) { moreWrap.style.display = 'none'; return; }
+  info.next = r.next;  // raw offset — entries.length undercounts when unavailable videos drop out
   info.entries.push(...r.entries);
   plist.insertAdjacentHTML('beforeend', r.entries.map(entryRowHTML).join(''));
   filterList();  // keep an active filter applied to the new rows

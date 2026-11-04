@@ -1,6 +1,7 @@
 """Best-effort music tagging: MusicBrainz text lookup applied with mutagen.
 ponytail: AcoustID fingerprinting (needs an API key + bundled fpcalc) is the upgrade
 if title-based matching ever misses too often."""
+import glob
 import json
 import os
 import re
@@ -92,9 +93,20 @@ def _clean(t):
     return " ".join(t.split()).strip(" -")
 
 
-def tag_from_title(path, video_title):
+def has_tags(path):
+    """The file already names its artist and title (a local file's own tags win over a guess)."""
+    try:
+        import mutagen
+        f = mutagen.File(path, easy=True)
+        return bool(f and f.get("artist") and f.get("title"))
+    except Exception:
+        return False
+
+
+def tag_from_title(path, video_title, replaces=""):
     """Parse the video title, look it up, tag the file and rename it 'Artist - Title.ext'.
     Karaoke versions keep a '(Karaoke)' marker + genre so they never blend with originals.
+    replaces: a file this same video produced before (redo) — the only one it may overwrite.
     Returns the file's final path."""
     low = video_title.lower()
     karaoke = "karaoke" in low or "instrumental" in low  # backing tracks either way
@@ -130,8 +142,13 @@ def tag_from_title(path, video_title):
     if "artist" not in tags or "title" not in tags:
         return path  # title had no artist — keep the original name
     name = "".join("_" if c in '<>:"/\\|?*' else c for c in f"{tags['artist']} - {tags['title']}")
-    new = os.path.join(os.path.dirname(path), name.strip(" .")[:150] + os.path.splitext(path)[1])
-    if os.path.exists(new):
+    stem = os.path.join(os.path.dirname(path), name.strip(" .")[:150])
+    new = stem + os.path.splitext(path)[1]
+    if os.path.exists(new) and os.path.normcase(new) != os.path.normcase(replaces):
         return path  # never overwrite (same song from another channel, or same name)
-    os.rename(path, new)
+    os.replace(path, new)
+    # audio subs stay as sidecars (only video embeds them) — move them along or they're orphaned
+    old_stem = os.path.splitext(path)[0]
+    for side in glob.glob(glob.escape(old_stem) + ".*.vtt") + glob.glob(glob.escape(old_stem) + ".*.srt"):
+        os.replace(side, stem + side[len(old_stem):])
     return new

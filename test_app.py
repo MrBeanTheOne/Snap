@@ -1,9 +1,11 @@
-"""Self-check for the 2026-11-03 audit fixes (findings 2-11). Run: python test_app.py"""
+"""Self-check for the 2026-11-03 audit fixes (findings 2-18). Run: python test_app.py"""
 import hashlib
+import http.client
 import io
 import json
 import os
 import ssl
+import subprocess
 import tempfile
 import threading
 import time
@@ -22,7 +24,6 @@ import app  # noqa: E402
 # no background threads: workers would really download, the loop/update check hit the network
 REAL_LOOP = app.Api._watch_loop
 app.Api._worker = app.Api._watch_loop = app.Api._check_update_bg = lambda self: None
-RealThread = threading.Thread
 
 
 class SyncThread:  # run the watch threads inline so the test is deterministic
@@ -33,7 +34,8 @@ class SyncThread:  # run the watch threads inline so the test is deterministic
         self.run()
 
 
-threading.Thread = SyncThread
+# only app's view of threading: library's server and subprocess need real threads
+app.threading = types.SimpleNamespace(Thread=SyncThread, Lock=threading.Lock, Timer=threading.Timer)
 feed = {}  # url → list of video ids, an Exception to raise, or None (breaks _check_watch)
 
 
@@ -103,7 +105,7 @@ finally:
 assert w["error"] and len(api.jobs) == 2, (w["error"], api.jobs)
 
 # 6. concurrent enqueues get unique ids
-ts = [RealThread(target=lambda: [api.enqueue(f"u{i}", "mp3", 0, "t") for i in range(25)]) for _ in range(8)]
+ts = [threading.Thread(target=lambda: [api.enqueue(f"u{i}", "mp3", 0, "t") for i in range(25)]) for _ in range(8)]
 [t.start() for t in ts]
 [t.join() for t in ts]
 ids = [j["id"] for j in api.jobs]
@@ -244,4 +246,68 @@ app.library._embedded_art = real_art
 app.library._GET_OUT = lambda: lib
 assert app.library._resolve("../Snap-evil/x") is None and app.library._resolve("../../x") is None
 assert app.library._resolve("sub/a.mp3") == os.path.join(lib, "sub", "a.mp3")
+
+# 14b + c. the media server needs the session token, and answers bad Ranges with 416
+port = app.library.ensure_server(lambda: lib, None)
+
+
+def get(path, rng=None):
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    c.request("GET", path, headers={"Range": rng} if rng else {})
+    r = c.getresponse()
+    return r.status, r.read()
+
+
+tok = app.library._TOKEN
+assert get("/media/a.mp3")[0] == 404  # what another web page / DNS rebinding would try
+assert get(f"/{tok}/media/a.mp3") == (200, b"not really an mp3")
+assert get(f"/{tok}/media/a.mp3", "bytes=0-2") == (206, b"not")
+assert get(f"/{tok}/media/a.mp3", "bytes=-3") == (206, b"mp3")
+for bad in ("bytes=0-1,4-5", "bytes=x-1", "bytes=999-", "bytes=-"):
+    assert get(f"/{tok}/media/a.mp3", bad)[0] == 416, bad
+assert get(f"/{tok}/media/a.mp3")[0] == 200  # server survived all of the above
+
+# 15. converting never clobbers (here: the source itself), and a tagged file keeps its tags
+out = tempfile.mkdtemp()
+api.out_dir = out
+tagged, plain = os.path.join(out, "tagged.mp3"), os.path.join(out, "plain.flac")
+subprocess.run([app.FFMPEG, "-f", "lavfi", "-i", "sine=d=1", "-metadata", "artist=Me",
+                "-metadata", "title=Mine", tagged], capture_output=True, check=True)
+subprocess.run([app.FFMPEG, "-f", "lavfi", "-i", "sine=d=1", plain], capture_output=True, check=True)
+titles = []
+real_tag = app.tagging.tag_from_title
+app.tagging.tag_from_title = lambda p, t, r="": titles.append(t) or p
+for src in (tagged, plain):
+    api._convert({"url": src, "mode": "mp3", "title": os.path.basename(src), "cancel": False})
+assert os.path.exists(os.path.join(out, "tagged (1).mp3")) and os.path.getsize(tagged) > 0
+assert titles == ["plain"], titles  # tagged.mp3 skipped; no '.flac' in the guess
+app.tagging.tag_from_title = real_tag
+
+# 16. a redo replaces the file the same video made before; subtitle sidecars follow the rename
+app.updater._urlopen = mb_down  # no MB: the title-order fallback names it
+d = tempfile.mkdtemp()
+prev = os.path.join(d, "David Bowie - Heroes.mp3")
+for n in ("Heroes video.mp3", "Heroes video.en.vtt", "David Bowie - Heroes.mp3"):
+    open(os.path.join(d, n), "w").close()
+fresh_dl = os.path.join(d, "Heroes video.mp3")
+assert app.tagging.tag_from_title(fresh_dl, "David Bowie - Heroes") == fresh_dl  # not a redo: keep both
+assert app.tagging.tag_from_title(fresh_dl, "David Bowie - Heroes", prev) == prev
+assert sorted(os.listdir(d)) == ["David Bowie - Heroes.en.vtt", "David Bowie - Heroes.mp3"], os.listdir(d)
+app.updater._urlopen = real_urlopen
+
+# 17. a synced playlist over 3000 items doesn't re-trigger its oldest ones
+big = "https://www.youtube.com/playlist?list=PLbig"
+feed[big] = [f"big{i:08}" for i in range(3500)]
+b = api._watch(api.add_watch(big, "", "mp3", 1080, False, False))
+api._check_watch(b)
+assert len(b["seen"]) == 3500 and b["pending"] == [], (len(b["seen"]), len(b["pending"]))
+
+# 18. paging counts raw items (unavailable videos come back as None); any scheme is a link
+asked = []
+api._flat_info = lambda u, items=None, progress=False: asked.append(u) or {
+    "_type": "playlist", "title": "T", "entries": [{"url": "a", "title": "a"}, None, {"url": "c", "title": "c"}]}
+r = api.get_info("https://www.youtube.com/@chan", "videos", 6, 3)
+assert r["more"] and r["next"] == 9 and len(r["entries"]) == 2, r
+api.get_info("ftp://example.com/x.mp4")
+assert asked[-1] == "ftp://example.com/x.mp4", asked  # not a YouTube search for 'ftp://…'
 print("ok")
