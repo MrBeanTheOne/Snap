@@ -5,7 +5,10 @@ const MODES = ['mp4', 'mkv', 'mp3', 'm4a', 'flac', 'wav', 'opus'];
 const HEIGHTS = [2160, 1440, 1080, 720, 480, 360];
 const isVideo = m => m === 'mp4' || m === 'mkv';
 
-function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+// safe in element text AND quoted attributes — titles come from untrusted uploaders,
+// and every inline handler holds pywebview.api
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ESC[c]); }
 
 const FRIENDLY = [
   [/sign in to confirm|too many requests|429/i, 'YouTube is rate-limiting this network — wait a bit and try again'],
@@ -43,10 +46,16 @@ async function loadLibrary() {
   renderLibrary();
 }
 
+// the server 404s a file with no cover art — show the format tile in its place
+function noCover(img) {
+  const d = document.createElement('div');
+  d.className = 'nocov';
+  d.textContent = img.dataset.ext;
+  img.replaceWith(d);
+}
+
 function libCard(i, idx) {
-  const cov = i.cover_url
-    ? `<img class="cov" src="${esc(i.cover_url)}" alt="" loading="lazy">`
-    : `<div class="nocov">${esc(i.ext)}</div>`;
+  const cov = `<img class="cov" src="${esc(i.cover_url)}" alt="" loading="lazy" data-ext="${esc(i.ext)}" onerror="noCover(this)">`;
   return `
     <div class="libcard" onclick="playLib(${idx})" oncontextmenu="event.preventDefault(); api().reveal(LIB[${idx}].path)"
          title="${esc(i.name)} — click to play, right-click to show in Explorer">
@@ -282,6 +291,14 @@ function copyUrl(id) {
   if (j) navigator.clipboard.writeText(j.url);
 }
 
+function jobStat(j) {
+  const clip = j.clip_a || j.clip_b ? ` · ✂ ${esc(j.clip_a || '0:00')}–${esc(j.clip_b || 'end')}` : '';
+  const stat = (j.status === 'downloading'
+    ? `${j.percent}%  ${esc(j.speed)}${j.eta ? ' · ' + esc(j.eta) + ' left' : ''}`
+    : `<b>${esc(LABEL[j.status] || j.status)}</b>${j.error ? ' — ' + esc(friendly(j.error)) : ''}`) + clip;
+  return `${j.mode.toUpperCase()}${isVideo(j.mode) ? ' ' + j.quality + 'p' : ''} · ${stat}`;
+}
+
 function jobRow(j) {
   const active = !['done', 'error', 'cancelled'].includes(j.status);
   const btns =
@@ -291,18 +308,14 @@ function jobRow(j) {
     `<button class="mini ghost icon" onclick="copyUrl(${j.id})" title="Copy link">
        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
      </button>`;
-  const clip = j.clip_a || j.clip_b ? ` · ✂ ${esc(j.clip_a || '0:00')}–${esc(j.clip_b || 'end')}` : '';
-  const stat = (j.status === 'downloading'
-    ? `${j.percent}%  ${esc(j.speed)}${j.eta ? ' · ' + esc(j.eta) + ' left' : ''}`
-    : `<b>${esc(LABEL[j.status] || j.status)}</b>${j.error ? ' — ' + esc(friendly(j.error)) : ''}`) + clip;
   const img = j.thumb ? `<img class="jt" src="${esc(j.thumb)}" alt="" loading="lazy">` : `<div class="noimg">${esc(j.mode)}</div>`;
   return `
-    <div class="job ${j.status}">
+    <div class="job ${j.status}" id="job-${j.id}">
       <div class="body">
         ${img}
         <div class="mid">
           <div class="title">${esc(j.title)}</div>
-          <div class="stat">${j.mode.toUpperCase()}${isVideo(j.mode) ? ' ' + j.quality + 'p' : ''} · ${stat}</div>
+          <div class="stat">${jobStat(j)}</div>
         </div>
         <div class="btns">${btns}</div>
       </div>
@@ -379,8 +392,8 @@ function watchRow(w) {
   const tabs = w.tabs || ['videos'];
   const pend = w.pending.map(p => `
     <div class="newvid"><span>${esc(p.title)}</span>
-      <button class="mini go" onclick='api().download_pending(${w.id}, ${JSON.stringify(p.url)})'>Download</button>
-      <button class="mini ghost" onclick='ignorePend(${w.id}, ${JSON.stringify(p.url)})' title="Ignore this release">✕</button>
+      <button class="mini go" onclick="api().download_pending(${w.id}, ${esc(JSON.stringify(p.url))})">Download</button>
+      <button class="mini ghost" onclick="ignorePend(${w.id}, ${esc(JSON.stringify(p.url))})" title="Ignore this release">✕</button>
     </div>`).join('');
   const edit = w.id === editWatch ? `
     <div class="wedit" id="we-${w.id}">
@@ -395,7 +408,7 @@ function watchRow(w) {
     </div>` : '';
   const ava = w.thumb
     ? `<img class="wava" src="${esc(w.thumb)}" alt="" loading="lazy">`
-    : `<div class="wava">${esc((w.title || '?').trim()[0].toUpperCase())}</div>`;
+    : `<div class="wava">${esc(((w.title || '').trim() || '?')[0].toUpperCase())}</div>`;
   const col = collapsedWatches.has(w.id);
   return `
     <div class="watch${col ? ' col' : ''}">
@@ -451,10 +464,19 @@ async function poll() {
   const q = jobFilter.value.trim().toLowerCase();
   const shown = jobList.filter(FILT[statusFilter])
     .filter(j => !q || (j.title || '').toLowerCase().includes(q));
-  const jh = shown.length
-    ? shown.slice().reverse().map(jobRow).join('')
-    : `<div class="empty">${q || statusFilter !== 'all' ? 'No downloads match.' : 'Nothing yet — grab something from the Search tab.'}</div>`;
-  if (jh !== lastJobsHTML) { lastJobsHTML = jh; jobs.innerHTML = jh; }  // same click-swallow guard as watches
+  const rows = shown.slice().reverse();
+  const empty = `<div class="empty">${q || statusFilter !== 'all' ? 'No downloads match.' : 'Nothing yet — grab something from the Search tab.'}</div>`;
+  // same click-swallow guard as watches, but percent/speed change every tick: compare the
+  // list with those blanked, rebuild only on real change, and patch progress in place —
+  // the ✕ under the cursor is never replaced mid-click
+  const key = rows.map(j => jobRow({ ...j, percent: 0, speed: '', eta: '' })).join('') || empty;
+  if (key !== lastJobsHTML) { lastJobsHTML = key; jobs.innerHTML = rows.map(jobRow).join('') || empty; }
+  else for (const j of rows) {
+    if (FILT.completed(j)) continue;  // finished rows never tick; a status change rebuilds
+    const row = document.getElementById('job-' + j.id), st = jobStat(j);
+    if (row._st !== st) { row._st = st; row.querySelector('.stat').innerHTML = st; }
+    row.querySelector('.track div').style.width = j.percent + '%';
+  }
   const active = jobList.filter(j => !['done', 'error', 'cancelled'].includes(j.status)).length;
   dlBadge.style.display = active ? '' : 'none';
   dlBadge.textContent = active;

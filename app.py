@@ -136,6 +136,7 @@ class Api:
         self.jobs = []
         self.watches = []
         self._ignored = {}  # watch_id → last ignored pending items; session-only undo
+        self._wlocks = {}  # watch_id → lock: one check of a watch at a time
         self.settings = dict(DEFAULT_SETTINGS)
         try:
             with open(STATE_FILE, encoding="utf-8") as f:
@@ -145,12 +146,29 @@ class Api:
             self.watches = state.get("watches", [])
             self.downloaded = state.get("downloaded", {})
             self.settings.update({k: v for k, v in state.get("settings", {}).items() if k in DEFAULT_SETTINGS})
+        except FileNotFoundError:
+            pass  # first run
         except Exception:
-            pass
+            # unreadable state: set it aside, or the next save wipes watches/settings/memory for good
+            try:
+                os.replace(STATE_FILE, STATE_FILE + ".bad")
+            except OSError:
+                pass
+        # jobs a quit/crash/update restart interrupted resume from the top of the queue
+        for j in self.jobs:
+            if j["status"] in TERMINAL:
+                continue
+            if j.get("cancel") or j["status"] == "cancelling":
+                j["status"] = "cancelled"
+            else:
+                j.update(status="queued", percent=0, speed="", eta="")  # yt-dlp resumes .part files
+                self.q.put(j)
         # migrate pre-tabs watches: url used to carry a /videos suffix
         for w in self.watches:
             w.setdefault("tabs", ["videos"])
             w["url"] = re.sub(r"/(videos|shorts|streams|live)/?$", "", w["url"].rstrip("/"))
+            # pre-"seeded" watches: anything with history was seeded; an empty one re-seeds
+            w.setdefault("seeded", self._watch_urls(w) if w["seen"] else [])
         self.quitting = False  # set by any path that means "really close", not "hide to tray"
         self.update_info = None  # filled by the launch check below; the UI polls for it
         threading.Thread(target=self._check_update_bg, daemon=True).start()
@@ -169,12 +187,17 @@ class Api:
     def _save_raw(self):
         with self.lock:
             os.makedirs(updater.STATE_DIR, exist_ok=True)
-            history = [j for j in self.jobs if j["status"] in TERMINAL][-200:]
-            with open(STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(
-                    {"out_dir": self.out_dir, "history": history, "watches": self.watches,
-                     "settings": self.settings, "downloaded": self.downloaded}, f
-                )
+            # unfinished jobs persist too, so the queue survives quit/crash/update restart
+            history = ([j for j in self.jobs if j["status"] in TERMINAL][-200:]
+                       + [j for j in self.jobs if j["status"] not in TERMINAL])
+            # temp + replace: a kill mid-dump (update restart) must never truncate the real file
+            tmp = STATE_FILE + ".tmp"
+            # dumps (one C call) not dump: chunked writes let watch/worker threads mutate mid-encode
+            data = json.dumps({"out_dir": self.out_dir, "history": history, "watches": self.watches,
+                               "settings": self.settings, "downloaded": self.downloaded})
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(data)
+            os.replace(tmp, STATE_FILE)
 
     # ---- called from JS ----
 
@@ -247,7 +270,6 @@ class Api:
 
     def enqueue(self, url, mode, quality, title, subs=False, thumb="", folder="", clip_a="", clip_b=""):
         job = {
-            "id": max((j["id"] for j in self.jobs), default=-1) + 1,
             "title": title or url,
             "url": url,
             "mode": mode,
@@ -265,8 +287,11 @@ class Api:
             "filepath": "",
             "cancel": False,
         }
-        self.jobs.append(job)
+        with self.lock:  # JS calls and watch threads enqueue concurrently — ids must not collide
+            job["id"] = max((j["id"] for j in self.jobs), default=-1) + 1
+            self.jobs.append(job)
         self.q.put(job)
+        self._save()  # a crash before the first job finishes must not lose the queue
         return job["id"]
 
     def redo(self, job_id):
@@ -293,7 +318,8 @@ class Api:
         return self.paused
 
     def clear_history(self):
-        self.jobs = [j for j in self.jobs if j["status"] not in TERMINAL]
+        with self.lock:  # a concurrent enqueue's append must not land in the discarded list
+            self.jobs = [j for j in self.jobs if j["status"] not in TERMINAL]
         self._save()
 
     def get_clipboard(self):
@@ -349,8 +375,8 @@ class Api:
     # ---- library ----
 
     def get_library(self):
-        library.ensure_server(lambda: self.out_dir)
-        return library.scan(self.out_dir, FFMPEG)
+        library.ensure_server(lambda: self.out_dir, FFMPEG)
+        return library.scan(self.out_dir)
 
     def reveal(self, path):
         if os.path.exists(path):
@@ -418,13 +444,14 @@ class Api:
             "tabs": tabs,
             "thumb": "",
             "seen": [],
+            "seeded": [],  # watch urls whose current uploads are already in seen
             "pending": [],
             "checked": "",
             "error": "",
         }
         self.watches.append(w)
-        # seed: current uploads count as already-seen, only future ones trigger
-        threading.Thread(target=self._check_watch, args=(w, True), daemon=True).start()
+        # first check seeds: current uploads count as already-seen, only future ones trigger
+        threading.Thread(target=self._check_watch, args=(w,), daemon=True).start()
         return w["id"]
 
     def remove_watch(self, watch_id):
@@ -437,21 +464,11 @@ class Api:
             return
         added = [t for t in tabs if t not in w.get("tabs", ["videos"])]
         w.update({"mode": mode, "quality": int(quality or 1080), "subs": bool(subs), "tabs": tabs})
+        # a removed tab must re-seed if it's ever re-enabled, or its backlog floods in
+        w["seeded"] = [u for u in w["seeded"] if u in self._watch_urls(w)]
         if added and self._is_channel(w["url"]):
-            # seed newly enabled tabs so existing uploads don't flood pending/auto-download
-            threading.Thread(target=self._seed_tabs, args=(w, added), daemon=True).start()
-        self._save()
-
-    def _seed_tabs(self, w, tabs):
-        for u in self._watch_urls(w, tabs):
-            try:
-                info = self._flat_info(u, items='1:15')
-                for e in info.get("entries", []) or []:
-                    vid = e and (e.get("id") or e.get("url"))
-                    if vid and vid not in w["seen"]:
-                        w["seen"].append(vid)
-            except Exception:
-                pass
+            # newly enabled tabs aren't in seeded, so this check seeds them
+            threading.Thread(target=self._check_watch, args=(w,), daemon=True).start()
         self._save()
 
     def toggle_auto(self, watch_id):
@@ -545,10 +562,13 @@ class Api:
         return next((w for w in self.watches if w["id"] == watch_id), None)
 
     def _watch_loop(self):
-        while True:
-            time.sleep(self.settings["watch_interval"])
+        while True:  # checks at launch too, then every interval
             for w in list(self.watches):
-                self._check_watch(w)
+                try:
+                    self._check_watch(w)
+                except Exception as e:  # one bad watch must never stop ALL watching
+                    w["error"] = str(e)[:120]
+            time.sleep(self.settings["watch_interval"])
 
     def _notify(self, title, msg):
         if not self.settings.get("notify", True):
@@ -559,9 +579,19 @@ class Api:
         except Exception:
             pass
 
-    def _check_watch(self, w, seed=False):
+    def _check_watch(self, w):
+        lock = self._wlocks.setdefault(w["id"], threading.Lock())
+        if not lock.acquire(blocking=False):
+            return  # already being checked (loop vs Check now vs seed) — that run covers this one
+        try:
+            self._check_watch_locked(w)
+        finally:
+            lock.release()
+
+    def _check_watch_locked(self, w):
         errs = []
         new = 0
+        brand_new = not w["seeded"]  # first successful fetch adopts the source's title
         for u in self._watch_urls(w):
             try:
                 # channels list newest first (15 is plenty); playlists append at the
@@ -571,7 +601,12 @@ class Api:
             except Exception as e:
                 errs.append(str(e)[:120])
                 continue
-            if seed and info.get("title"):
+            # a url arms only after a SUCCESSFUL fetch — a failed seed used to leave seen
+            # empty, so the next check treated the whole backlog as new (and auto-enqueued it)
+            seed = u not in w["seeded"]
+            if seed:
+                w["seeded"].append(u)
+            if brand_new and info.get("title"):
                 w["title"] = info["title"]
             if not w.get("thumb"):  # channel avatar; also backfills pre-avatar watches
                 thumbs = info.get("thumbnails") or []
@@ -634,7 +669,16 @@ class Api:
                 if d or e:
                     msg = f"{d} download{'s' if d != 1 else ''} finished" + (f", {e} failed" if e else "")
                     self._notify("Snap", msg)
+            self._trim_jobs()
             self._save()
+
+    def _trim_jobs(self):
+        # memory (and every 500ms get_jobs poll) keeps what's persisted: the last 200 finished
+        with self.lock:
+            fin = [j for j in self.jobs if j["status"] in TERMINAL]
+            if len(fin) > 200:
+                old = {id(j) for j in fin[:-200]}
+                self.jobs = [j for j in self.jobs if id(j) not in old]  # order kept: rows don't jump
 
     def _convert(self, job):
         """Local file → chosen format with the bundled ffmpeg. Video modes remux (-c copy)."""

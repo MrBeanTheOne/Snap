@@ -18,8 +18,11 @@ _UA = f"Snap/{updater.APP_VERSION} (https://github.com/{updater.REPO})"
 
 
 def mb_lookup(artist, title):
-    """Best MusicBrainz match for a track, or None. Globally throttled to their 1 req/s limit."""
-    q = f'recording:"{title}"' + (f' AND artist:"{artist}"' if artist else "")
+    """Best MusicBrainz match for a track, or None; raises when MB can't be reached.
+    Globally throttled to their 1 req/s limit."""
+    def phrase(s):  # a bare " or \ (David Bowie - "Heroes") breaks the Lucene query → HTTP 400
+        return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    q = f"recording:{phrase(title)}" + (f" AND artist:{phrase(artist)}" if artist else "")
     url = "https://musicbrainz.org/ws/2/recording?fmt=json&limit=10&query=" + urllib.parse.quote(q)
     with _LOCK:
         wait = 1.1 - (time.time() - _LAST[0])
@@ -27,14 +30,14 @@ def mb_lookup(artist, title):
             time.sleep(wait)
         _LAST[0] = time.time()
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
+    try:  # updater's opener: same stale-cert-store / proxy handling as the update checks
+        with updater._urlopen(req, 10) as r:
             recs = json.load(r).get("recordings") or []
     except urllib.error.HTTPError as e:
         if e.code != 503:  # MB throttles with transient 503s — one retry
             raise
         time.sleep(2)
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with updater._urlopen(req, 10) as r:
             recs = json.load(r).get("recordings") or []
     if not recs or int(recs[0].get("score", 0)) < 90:
         return None
@@ -104,7 +107,12 @@ def tag_from_title(path, video_title):
     tries += [(a, b), (b, a)] if b else [("", clean)]
     tags = None
     for artist, title in tries:
-        tags = mb_lookup(artist, title)
+        try:
+            tags = mb_lookup(artist, title)
+        except Exception:
+            # MB down/slow/throttling: the rest would fail too — go straight to the
+            # fallback, so the karaoke marker and title-order tags still get written
+            break
         if tags:
             break
     if not tags and tries[0][0]:

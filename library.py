@@ -38,13 +38,16 @@ def _embedded_art(path, ext):
 
 
 def _cover(path, ext, ffmpeg):
-    """Cached thumbnail: embedded art for audio, a frame grab for video."""
+    """Cached thumbnail: embedded art for audio, a frame grab for video; "" when there's none."""
     os.makedirs(COVER_DIR, exist_ok=True)
     st = os.stat(path)
     key = hashlib.md5(f"{path}|{st.st_mtime_ns}".encode()).hexdigest()
     out = os.path.join(COVER_DIR, key + ".jpg")
+    miss = os.path.join(COVER_DIR, key + ".none")  # negative cache — mtime in the key retries edits
     if os.path.exists(out):
         return out
+    if os.path.exists(miss) or (ext in VIDEO and not ffmpeg):
+        return ""
     try:
         if ext in VIDEO:
             for seek in ("3", "0"):  # a clip shorter than the seek yields no frame — retry at 0
@@ -60,27 +63,46 @@ def _cover(path, ext, ffmpeg):
                     f.write(data)
     except Exception:
         pass
-    return out if os.path.exists(out) else ""
+    if os.path.exists(out):
+        return out
+    open(miss, "w").close()
+    return ""
 
 
 _PORT = None
 _GET_OUT = None
+_FFMPEG = None
+
+
+def _resolve(rel):
+    """URL path → file under the download folder, or None if it escapes it."""
+    root = os.path.normpath(_GET_OUT())
+    fp = os.path.normpath(os.path.join(root, rel.lstrip("/")))
+    try:  # commonpath, not startswith: '…\Snap-evil' starts with '…\Snap'
+        return fp if os.path.commonpath([root, fp]) == root else None
+    except ValueError:  # another drive
+        return None
 
 
 class _MediaHandler(http.server.BaseHTTPRequestHandler):
-    """Serves /covers/<file> and /media/<path under out_dir> with Range support (seeking)."""
+    """Serves /cover/<path> (made on first request) and /media/<path> with Range support
+    (seeking); both paths are relative to out_dir."""
 
     def log_message(self, *a):
         pass
 
     def do_GET(self):
-        p = urllib.parse.unquote(self.path)
-        if p.startswith("/covers/"):
-            fp = os.path.join(COVER_DIR, os.path.basename(p[len("/covers/"):]))
+        p = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
+        if p.startswith("/cover/"):
+            # made HERE, not in scan(): the <img> is lazy, so only cards scrolled into view
+            # pay for an ffmpeg frame grab, each on its own server thread
+            src = _resolve(p[len("/cover/"):])
+            fp = src and os.path.isfile(src) and _cover(src, os.path.splitext(src)[1].lower(), _FFMPEG)
+            if not fp:
+                return self.send_error(404)  # the card falls back to its format tile
         elif p.startswith("/media/"):
-            root = os.path.normpath(_GET_OUT())
-            fp = os.path.normpath(os.path.join(root, p[len("/media/"):].lstrip("/")))
-            if not fp.startswith(root):  # no path traversal
+            fp = _resolve(p[len("/media/"):])
+            if not fp:  # no path traversal
                 return self.send_error(403)
         else:
             return self.send_error(404)
@@ -116,10 +138,10 @@ class _MediaHandler(http.server.BaseHTTPRequestHandler):
             pass  # player seeked / closed mid-stream
 
 
-def ensure_server(get_out_dir):
+def ensure_server(get_out_dir, ffmpeg):
     """Start (once) the localhost media server; returns its port."""
-    global _PORT, _GET_OUT
-    _GET_OUT = get_out_dir
+    global _PORT, _GET_OUT, _FFMPEG
+    _GET_OUT, _FFMPEG = get_out_dir, ffmpeg
     if _PORT is None:
         srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _MediaHandler)
         _PORT = srv.server_address[1]
@@ -127,7 +149,8 @@ def ensure_server(get_out_dir):
     return _PORT
 
 
-def scan(out_dir, ffmpeg):
+def scan(out_dir):
+    """Walk + stat only — covers come later, per visible card, from /cover/."""
     items = []
     if not os.path.isdir(out_dir):
         return items
@@ -143,8 +166,7 @@ def scan(out_dir, ffmpeg):
                 continue
             folder = os.path.relpath(root, out_dir)
             folder = "" if folder == "." else folder.replace("\\", "/")
-            cover = _cover(path, ext, ffmpeg)
-            rel = (folder + "/" if folder else "") + fn
+            rel = urllib.parse.quote((folder + "/" if folder else "") + fn)
             items.append({
                 "name": os.path.splitext(fn)[0],
                 "path": path,
@@ -153,8 +175,9 @@ def scan(out_dir, ffmpeg):
                 "video": ext in VIDEO,
                 "size": st.st_size,
                 "mtime": int(st.st_mtime),
-                "cover_url": f"http://127.0.0.1:{_PORT}/covers/{os.path.basename(cover)}" if cover else "",
-                "media_url": f"http://127.0.0.1:{_PORT}/media/" + urllib.parse.quote(rel),
+                # ?v=mtime: an edited file must not show the browser-cached old cover
+                "cover_url": f"http://127.0.0.1:{_PORT}/cover/{rel}?v={st.st_mtime_ns}",
+                "media_url": f"http://127.0.0.1:{_PORT}/media/{rel}",
             })
     items.sort(key=lambda x: -x["mtime"])
     return items

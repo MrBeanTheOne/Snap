@@ -1,4 +1,5 @@
 """Self-update plumbing: yt-dlp from PyPI wheels, the app itself from GitHub."""
+import hashlib
 import io
 import json
 import os
@@ -6,6 +7,7 @@ import shutil
 import ssl
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 import webbrowser
 import zipfile
@@ -21,7 +23,14 @@ except Exception:
 
 
 def _urlopen(url_or_req, timeout):
-    return urllib.request.urlopen(url_or_req, timeout=timeout, context=_SSL_CTX)
+    try:
+        return urllib.request.urlopen(url_or_req, timeout=timeout, context=_SSL_CTX)
+    except urllib.error.URLError as e:
+        # a TLS-inspecting proxy re-signs with an enterprise root that's in the Windows
+        # store but not in certifi — so a certifi verify failure retries on the system store
+        if _SSL_CTX is None or not isinstance(e.reason, ssl.SSLCertVerificationError):
+            raise
+        return urllib.request.urlopen(url_or_req, timeout=timeout)
 
 APP_VERSION = "4.12.2"
 REPO = "MrBeanTheOne/Snap"
@@ -103,9 +112,12 @@ def update_ytdlp():
         for pkg in ("yt-dlp", "yt-dlp-ejs"):
             with _urlopen(f"https://pypi.org/pypi/{pkg}/json", timeout=10) as r:
                 meta = json.load(r)
-            whl = next(u["url"] for u in meta["urls"] if u["filename"].endswith(".whl"))
-            with _urlopen(whl, timeout=120) as r:
-                zipfile.ZipFile(io.BytesIO(r.read())).extractall(new)
+            whl = next(u for u in meta["urls"] if u["filename"].endswith(".whl"))
+            with _urlopen(whl["url"], timeout=120) as r:
+                data = r.read()
+            if hashlib.sha256(data).hexdigest() != whl["digests"]["sha256"]:
+                raise RuntimeError(f"{pkg} download corrupted (sha256 mismatch)")
+            zipfile.ZipFile(io.BytesIO(data)).extractall(new)
         return {"ok": True}  # swapped into pkgs/ by apply_pending() on next launch
     except Exception as e:
         shutil.rmtree(new, ignore_errors=True)
@@ -134,7 +146,8 @@ def update_app():
         )
         with _urlopen(req, timeout=10) as r:
             assets = json.load(r).get("assets") or []
-        url = next((a["browser_download_url"] for a in assets if a["name"].endswith(".zip")), "")
+        asset = next((a for a in assets if a["name"].endswith(".zip")), {})
+        url = asset.get("browser_download_url", "")
     except Exception as e:
         PROGRESS.update(pct=0, stage="")
         return {"error": str(e)[:160]}
@@ -145,7 +158,7 @@ def update_app():
         return {"manual": True}
     try:
         inst = os.path.dirname(sys.executable)
-        stage = _stage_release(url, inst)
+        stage = _stage_release(url, inst, asset.get("digest") or "")
         # The bundle is only as fresh as the CI run that built it; grab the current
         # yt-dlp too so one click lands on the newest of both. Best-effort: a PyPI
         # hiccup must not cost you the app update, and the bundled copy still works.
@@ -160,15 +173,17 @@ def update_app():
         return {"error": str(e)[:160]}
 
 
-def _stage_release(url, inst):
+def _stage_release(url, inst, digest=""):
     """Download and unpack the release zip into a temp stage; returns the new app root.
-    Staged OUTSIDE the install dir so the mirror-copy can't eat its own source."""
+    Staged OUTSIDE the install dir so the mirror-copy can't eat its own source.
+    digest: GitHub's 'sha256:<hex>' for the asset (absent on assets uploaded before mid-2025)."""
     stage = os.path.join(os.environ.get("TEMP", inst), "snap_update_stage")
     shutil.rmtree(stage, ignore_errors=True)
     os.makedirs(stage)
     zf = os.path.join(stage, "snap.zip")
     PROGRESS.update(pct=0, stage="downloading")
     got = 0
+    h = hashlib.sha256()
     with _urlopen(url, timeout=600) as r, open(zf, "wb") as f:
         total = int(r.headers.get("Content-Length") or 0)
         while True:
@@ -176,11 +191,14 @@ def _stage_release(url, inst):
             if not chunk:
                 break
             f.write(chunk)
+            h.update(chunk)
             got += len(chunk)
             if total:
                 PROGRESS["pct"] = got * 100 // total
     if got < 1 << 20:
         raise RuntimeError("download truncated")  # an error page unpacked as a build would brick it
+    if digest.startswith("sha256:") and h.hexdigest() != digest[7:]:
+        raise RuntimeError("download corrupted (sha256 mismatch)")
     PROGRESS.update(pct=100, stage="unpacking")
     zipfile.ZipFile(zf).extractall(stage)
     os.remove(zf)
@@ -193,26 +211,33 @@ def _stage_release(url, inst):
 def _spawn_apply(src, inst, exe="Snap.exe"):
     """Background batch: wait for the old exe to unlock, mirror the staged build in, relaunch."""
     bat = os.path.join(os.environ.get("TEMP", inst), "snap_update.bat")
-    target = os.path.join(inst, exe or "Snap.exe")
-    launch = f'start "" "{os.path.join(inst, exe)}"' if exe else ""
+    # Paths ride in env vars (UTF-16, expanded once), never baked into the file: the old
+    # ASCII .bat turned a non-ASCII path (C:\Users\Éric) into '?' and cmd expanded any '%'.
+    env = dict(os.environ, SNAP_SRC=src, SNAP_INST=inst, SNAP_STAGE=os.path.dirname(src),
+               SNAP_TARGET=os.path.join(inst, exe or "Snap.exe"))
+    launch = 'start "" "%SNAP_TARGET%"' if exe else ""
     # Poll the exe itself: opening it for append fails while a process holds the image.
     # A fixed sleep raced our own shutdown and left robocopy retrying ERROR 32 against a
     # still-running Snap.exe. The cap stops a hung exit leaving an invisible cmd spinning.
-    with open(bat, "w", encoding="ascii", errors="replace") as f:
+    # /mir ONLY inside _internal (Snap's alone; stale packages there poisoned old updates).
+    # The root just gets copied over: /mir there deleted the installer's unins000.* files —
+    # and anything else sharing the folder.
+    with open(bat, "w", encoding="ascii") as f:
         f.write(f"""@echo off
 set /a n=0
 :wait
 set /a n+=1
 if %n% geq 60 goto go
-2>nul (>>"{target}" call ) && goto go
+2>nul (>>"%SNAP_TARGET%" call ) && goto go
 timeout /t 1 /nobreak >nul
 goto wait
 :go
-robocopy "{src}" "{inst}" /mir /r:10 /w:1 >nul
-rmdir /s /q "{os.path.dirname(src)}"
+robocopy "%SNAP_SRC%\\_internal" "%SNAP_INST%\\_internal" /mir /r:10 /w:1 >nul
+robocopy "%SNAP_SRC%" "%SNAP_INST%" /r:10 /w:1 >nul
+rmdir /s /q "%SNAP_STAGE%"
 {launch}
 del "%~f0"
 """)
     # CREATE_NO_WINDOW alone: Windows IGNORES it when DETACHED_PROCESS is also set, so the
     # old 0x08000008 handed cmd its own visible console. The child outlives us either way.
-    subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000)
+    subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000, env=env)
