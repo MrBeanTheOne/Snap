@@ -137,6 +137,7 @@ class Api:
         self.watches = []
         self._ignored = {}  # watch_id → last ignored pending items; session-only undo
         self._wlocks = {}  # watch_id → lock: one check of a watch at a time
+        self._names = {}  # output path (lowercase) → _dlkey of the video that owns that name
         self.settings = dict(DEFAULT_SETTINGS)
         try:
             with open(STATE_FILE, encoding="utf-8") as f:
@@ -307,6 +308,25 @@ class Api:
             # the renamed 'Artist - Title' file is THIS video's: the redo may replace it
             # instead of leaving a second copy under the raw video title
             self._job(nid)["replaces"] = j.get("filepath", "")
+            if j["status"] in ("error", "cancelled"):  # the retry takes the dead row's place
+                with self.lock:
+                    self.jobs = [x for x in self.jobs if x is not j]
+                self._save()
+
+    def _unique_name(self, job, tmpl):
+        # channels reuse titles ("sample this", ×24): a DIFFERENT video with a taken name
+        # was skipped as "already downloaded" (or two workers raced on one file) — it gets
+        # its id appended instead. The same video keeps the plain name, so redo is unchanged.
+        # ponytail: owners come from this session + history; files from cleared history aren't known
+        path = yt_dlp.YoutubeDL({"outtmpl": tmpl, "quiet": True}).prepare_filename(
+            {"title": job["title"], "ext": job["mode"]}).lower()
+        me = self._dlkey(job["url"])
+        with self.lock:
+            if path not in self._names:
+                self._names[path] = next((self._dlkey(j["url"]) for j in self.jobs if j["status"] == "done"
+                                          and (j.get("filepath") or "").lower() == path), me)
+            owner = self._names[path]
+        return tmpl if owner == me else tmpl.replace(".%(ext)s", " [%(id)s].%(ext)s")
 
     def cancel(self, job_id):
         j = self._job(job_id)
@@ -773,6 +793,7 @@ class Api:
             # social sites use the whole caption as the title — cap it so the path fits
             # Windows' 260-char limit; YouTube keeps the template above untouched
             opts["outtmpl"] = os.path.join(out, "%(title).150B.%(ext)s")
+        opts["outtmpl"] = self._unique_name(job, opts["outtmpl"])
         if job["subs"]:
             langs = self.settings.get("sub_lang", "en").split(",")
             opts.update(

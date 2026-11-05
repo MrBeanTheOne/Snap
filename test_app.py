@@ -310,4 +310,28 @@ r = api.get_info("https://www.youtube.com/@chan", "videos", 6, 3)
 assert r["more"] and r["next"] == 9 and len(r["entries"]) == 2, r
 api.get_info("ftp://example.com/x.mp4")
 assert asked[-1] == "ftp://example.com/x.mp4", asked  # not a YouTube search for 'ftp://…'
+
+# 19. same title, different video: the newcomer gets its id instead of being skipped as
+# "already downloaded"; the video that owns the name (this session or history) keeps it
+d = tempfile.mkdtemp()
+t = os.path.join(d, "%(title)s.%(ext)s")
+v = lambda vid, title="sample this | x": {"title": title, "mode": "mp4", "url": f"https://youtu.be/{vid}"}
+assert api._unique_name(v("AAAAAAAAAAA"), t) == t
+assert api._unique_name(v("BBBBBBBBBBB"), t) == os.path.join(d, "%(title)s [%(id)s].%(ext)s")
+assert api._unique_name(v("AAAAAAAAAAA"), t) == t  # the same video again: plain name, as before
+api.jobs.append({"id": 9000, "status": "done", "url": "https://youtu.be/CCCCCCCCCCC", "title": "old",
+                 "filepath": os.path.join(d, "Old Title.mp4")})
+assert api._unique_name(v("DDDDDDDDDDD", "Old Title"), t) != t  # history owns it
+assert api._unique_name(v("CCCCCCCCCCC", "Old Title"), t) == t
+
+# 20. retrying a failed download replaces its row; redoing a finished one keeps it
+fid = api.enqueue("https://youtu.be/EEEEEEEEEEE", "mp3", 1080, "f")
+api._job(fid)["status"] = "error"
+n = len(api.jobs)
+api.redo(fid)
+assert api._job(fid) is None and len(api.jobs) == n and api.jobs[-1]["url"].endswith("EEEEEEEEEEE")
+did = api.enqueue("https://youtu.be/FFFFFFFFFFF", "mp3", 1080, "g")
+api._job(did)["status"] = "done"
+api.redo(did)
+assert api._job(did) and len(api.jobs) == n + 2
 print("ok")
