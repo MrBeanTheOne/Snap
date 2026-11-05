@@ -32,7 +32,7 @@ def _urlopen(url_or_req, timeout):
             raise
         return urllib.request.urlopen(url_or_req, timeout=timeout)
 
-APP_VERSION = "4.14.0"
+APP_VERSION = "4.14.1"
 REPO = "MrBeanTheOne/Snap"
 STATE_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Snap")
 PKG_DIR = os.path.join(STATE_DIR, "pkgs")  # in-app yt-dlp updates land here, shadowing the bundled copy
